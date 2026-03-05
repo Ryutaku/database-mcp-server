@@ -14,8 +14,8 @@ This server exposes 18 MCP tools:
 
 | Tool | Purpose |
 |---|---|
-| `pg_query` | Run `SELECT` queries |
-| `pg_switch_schema` | Set active schema (`search_path`) |
+| `pg_query` | Run read-only `SELECT` / `WITH` queries |
+| `pg_switch_schema` | Set active schema (`search_path`) for subsequent requests |
 | `pg_list_schemas` | List schemas |
 | `pg_create_schema` | Create schema |
 | `pg_list_tables` | List tables in a schema |
@@ -118,7 +118,8 @@ jdbc:postgresql://host:5432/dbname?currentSchema=your_schema
 
 ## Runtime Behavior and Safety
 
-- `pg_query` only accepts `SELECT` statements.
+- `pg_query` only accepts read-only `SELECT` / `WITH` queries.
+- `pg_switch_schema` updates active schema for following requests.
 - SQL execution timeout is `60` seconds.
 - `pg_execute` (and DDL helpers) block dangerous operations:
   - `DROP DATABASE`
@@ -162,14 +163,12 @@ Current timeout is 60 seconds. Optimize SQL or reduce result size (for example, 
 
 ```text
 postgres-mcp-server/
-├─ pom.xml
-├─ README.md
-├─ start.bat
-├─ start.sh
-└─ src/main/java/com/example/mcp/
-   ├─ PostgresMcpServer.java
-   ├─ PgsqlTools.java
-   └─ SchemaComparator.java
+|- pom.xml
+|- README.md
+`- src/main/java/com/example/mcp/
+   |- PostgresMcpServer.java
+   |- PgsqlTools.java
+   `- SchemaComparator.java
 ```
 
 ## License

@@ -66,6 +66,7 @@ public class PostgresMcpServer {
       try {
          Thread.currentThread().join();
       } catch (InterruptedException var8) {
+         Thread.currentThread().interrupt();
          System.err.println("Server interrupted: " + var8.getMessage());
       }
    }

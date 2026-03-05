@@ -15,12 +15,14 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 
 public class PgsqlTools {
    private final HikariDataSource dataSource;
    private final ObjectMapper objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+   private volatile String activeSchema;
 
    public PgsqlTools(String dbUrl, String dbUser, String dbPassword) {
       HikariConfig config = new HikariConfig();
@@ -59,7 +61,11 @@ public class PgsqlTools {
    }
 
    public Function<Map<String, Object>, McpSchema.CallToolResult> getQueryHandler() {
-      return args -> this.executeSelect((String)args.get("sql"));
+      return args -> {
+         String sql = (String)args.get("sql");
+         McpSchema.CallToolResult readOnlyCheck = this.validateReadOnlyQuery(sql);
+         return readOnlyCheck != null ? readOnlyCheck : this.executeSelect(sql);
+      };
    }
 
    public McpSchema.Tool getSwitchSchemaTool() {
@@ -73,8 +79,11 @@ public class PgsqlTools {
    public Function<Map<String, Object>, McpSchema.CallToolResult> getSwitchSchemaHandler() {
       return args -> {
          String schema = (String)args.get("schema");
-         String sql = "SET search_path TO " + this.quoteIdentifier(schema);
-         return this.executeDDL(sql, "已切换到 schema: " + schema);
+         if (!this.isSafeIdentifier(schema)) {
+            return this.errorResult("schema 名称不合法");
+         }
+         this.activeSchema = schema;
+         return this.successResult("已切换到 schema: " + schema);
       };
    }
 
@@ -427,9 +436,7 @@ public class PgsqlTools {
 
                return var20;
             } catch (SQLException var17) {
-               return !var17.getMessage().toLowerCase().contains("timeout")
-                     && !var17.getMessage().toLowerCase().contains("canceling statement")
-                     && !var17.getMessage().toLowerCase().contains("query cancelled")
+               return !this.isTimeoutException(var17)
                   ? this.errorResult("SQL 错误: " + var17.getMessage())
                   : this.errorResult("SQL 执行超时（60秒）: 数据库可能繁忙或存在锁冲突。建议：1) 检查是否有长时间运行的事务 2) 查看 pg_stat_activity 3) 稍后重试");
             } catch (JsonProcessingException var18) {
@@ -456,7 +463,12 @@ public class PgsqlTools {
 
    public Function<Map<String, Object>, McpSchema.CallToolResult> getCurrentUserHandler() {
       return args -> {
-         String sql = "SELECT\n    current_user as username,\n    session_user as session_user,\n    current_database() as database,\n    current_schema() as current_schema,\n    (SELECT pg_has_role(current_user, 'rds_superuser', 'MEMBER')) as is_superuser\n";
+         String sql = "SELECT\n"
+            + "    current_user as username,\n"
+            + "    session_user as session_user,\n"
+            + "    current_database() as database,\n"
+            + "    current_schema() as current_schema,\n"
+            + "    COALESCE((SELECT r.rolsuper FROM pg_roles r WHERE r.rolname = current_user), false) as is_superuser\n";
          return this.executeSelect(sql);
       };
    }
@@ -698,9 +710,7 @@ public class PgsqlTools {
 
          return var7;
       } catch (SQLException var14) {
-         return !var14.getMessage().toLowerCase().contains("timeout")
-               && !var14.getMessage().toLowerCase().contains("canceling statement")
-               && !var14.getMessage().toLowerCase().contains("query cancelled")
+         return !this.isTimeoutException(var14)
             ? this.errorResult("SQL 错误: " + var14.getMessage())
             : this.errorResult("查询超时（60秒）: 数据库可能繁忙或查询过于复杂。建议：1) 添加 LIMIT 限制返回行数 2) 检查是否有长时间运行的事务 3) 优化查询条件");
       } catch (JsonProcessingException var15) {
@@ -727,9 +737,7 @@ public class PgsqlTools {
 
          return var8;
       } catch (SQLException var15) {
-         return !var15.getMessage().toLowerCase().contains("timeout")
-               && !var15.getMessage().toLowerCase().contains("canceling statement")
-               && !var15.getMessage().toLowerCase().contains("query cancelled")
+         return !this.isTimeoutException(var15)
             ? this.errorResult("SQL 错误: " + var15.getMessage())
             : this.errorResult("查询超时（60秒）: 数据库可能繁忙或查询过于复杂。建议：1) 添加 LIMIT 限制返回行数 2) 检查是否有长时间运行的事务 3) 优化查询条件");
       } catch (JsonProcessingException var16) {
@@ -759,9 +767,7 @@ public class PgsqlTools {
 
          return var8;
       } catch (SQLException var15) {
-         return !var15.getMessage().toLowerCase().contains("timeout")
-               && !var15.getMessage().toLowerCase().contains("canceling statement")
-               && !var15.getMessage().toLowerCase().contains("query cancelled")
+         return !this.isTimeoutException(var15)
             ? this.errorResult("SQL 错误: " + var15.getMessage())
             : this.errorResult("查询超时（60秒）: 数据库可能繁忙或查询过于复杂。建议：1) 添加 LIMIT 限制返回行数 2) 检查是否有长时间运行的事务 3) 优化查询条件");
       } catch (JsonProcessingException var16) {
@@ -787,9 +793,7 @@ public class PgsqlTools {
 
             return var6;
          } catch (SQLException var12) {
-            return !var12.getMessage().toLowerCase().contains("timeout")
-                  && !var12.getMessage().toLowerCase().contains("canceling statement")
-                  && !var12.getMessage().toLowerCase().contains("query cancelled")
+            return !this.isTimeoutException(var12)
                ? this.errorResult("SQL 错误: " + var12.getMessage())
                : this.errorResult("SQL 执行超时（60秒）: 数据库可能繁忙或存在锁冲突。建议：1) 检查是否有长时间运行的事务 2) 查看 pg_stat_activity 3) 稍后重试");
          }
@@ -798,7 +802,7 @@ public class PgsqlTools {
 
    private McpSchema.CallToolResult checkDangerousOperations(String sql) {
       if (sql != null && !sql.trim().isEmpty()) {
-         String upperSql = sql.trim().toUpperCase();
+         String upperSql = this.normalizeSql(sql).toUpperCase(Locale.ROOT);
          String[] dangerousPatterns = new String[]{
             "DROP\\s+DATABASE", "DROP\\s+SCHEMA\\s+", "DROP\\s+USER\\s+", "DROP\\s+ROLE\\s+", "DROP\\s+TABLESPACE", "ALTER\\s+SYSTEM"
          };
@@ -825,8 +829,54 @@ public class PgsqlTools {
       return new McpSchema.CallToolResult(List.of(new McpSchema.TextContent(message)), true);
    }
 
+   private McpSchema.CallToolResult validateReadOnlyQuery(String sql) {
+      if (sql == null || sql.trim().isEmpty()) {
+         return this.errorResult("SQL 语句不能为空");
+      }
+      String normalized = this.normalizeSql(sql);
+      String withoutTrailingSemicolon = normalized.replaceFirst(";\\s*$", "");
+      if (withoutTrailingSemicolon.contains(";")) {
+         return this.errorResult("pg_query 不允许多语句执行");
+      }
+      String lower = normalized.toLowerCase(Locale.ROOT);
+      if (!(lower.startsWith("select") || lower.startsWith("with"))) {
+         return this.errorResult("pg_query 仅允许 SELECT 查询");
+      }
+      if (lower.matches(".*\\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|vacuum|analyze|comment|copy)\\b.*")) {
+         return this.errorResult("pg_query 仅允许只读查询");
+      }
+      return null;
+   }
+
+   private String normalizeSql(String sql) {
+      return sql.replaceAll("(?s)/\\*.*?\\*/", " ")
+         .replaceAll("(?m)--.*$", " ")
+         .replaceAll("\\s+", " ")
+         .trim();
+   }
+
+   private boolean isTimeoutException(SQLException e) {
+      String message = String.valueOf(e.getMessage()).toLowerCase(Locale.ROOT);
+      return message.contains("timeout") || message.contains("canceling statement") || message.contains("query cancelled");
+   }
+
+   private boolean isSafeIdentifier(String identifier) {
+      return identifier != null && identifier.matches("[A-Za-z_][A-Za-z0-9_]*");
+   }
+
    private Connection getConnection() throws SQLException {
-      return this.dataSource.getConnection();
+      Connection conn = this.dataSource.getConnection();
+      try {
+         if (this.activeSchema != null && !this.activeSchema.isBlank()) {
+            try (Statement stmt = conn.createStatement()) {
+               stmt.execute("SET search_path TO " + this.quoteIdentifier(this.activeSchema));
+            }
+         }
+         return conn;
+      } catch (SQLException ex) {
+         conn.close();
+         throw ex;
+      }
    }
 
    private List<Map<String, Object>> resultSetToList(ResultSet rs) throws SQLException {
