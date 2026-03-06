@@ -8,6 +8,8 @@ import com.example.mcp.schema.SchemaDiffEngine;
 import com.example.mcp.schema.SchemaDiffResult;
 import com.example.mcp.schema.SchemaSnapshot;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -21,7 +23,9 @@ public class GenericMcpTools {
    private final DatabaseDialect dialect;
    private final ConnectionManager connectionManager;
    private final JdbcExecutor executor;
+   private static final ObjectMapper TOOL_SCHEMA_MAPPER = new ObjectMapper();
    private final SchemaDiffEngine schemaDiffEngine;
+   // 当前会话的活动 schema，由 db_switch_schema 动态更新。
    private volatile String activeSchema;
 
    public GenericMcpTools(DatabaseDialect dialect, ConnectionManager connectionManager, JdbcExecutor executor, String defaultSchema) {
@@ -34,6 +38,7 @@ public class GenericMcpTools {
 
    public List<RegisteredTool> getRegisteredTools() {
       List<RegisteredTool> tools = new ArrayList<>();
+      // 先注册统一的 db_* 工具，再为兼容老客户端补充 pg_* 别名。
       tools.add(new RegisteredTool(this.tool("db_query", "Execute a read-only SELECT or WITH query", """
          {
            "type": "object",
@@ -200,7 +205,15 @@ public class GenericMcpTools {
    }
 
    private McpSchema.Tool tool(String name, String description, String schema) {
-      return new McpSchema.Tool(name, description, schema);
+      return new McpSchema.Tool(name, null, description, this.parseJsonSchema(schema), null, null, null);
+   }
+
+   private McpSchema.JsonSchema parseJsonSchema(String schema) {
+      try {
+         return TOOL_SCHEMA_MAPPER.readValue(schema, new TypeReference<McpSchema.JsonSchema>() { });
+      } catch (JsonProcessingException ex) {
+         throw new IllegalArgumentException("Invalid tool schema JSON", ex);
+      }
    }
 
    private List<RegisteredTool> aliasTools(List<RegisteredTool> primaryTools) {
@@ -208,10 +221,11 @@ public class GenericMcpTools {
       for (RegisteredTool primary : primaryTools) {
          String primaryName = primary.tool().name();
          if (primaryName.startsWith("db_")) {
+            // 保留历史 PostgreSQL 命名，减少客户端迁移成本。
             String aliasName = primaryName.equals("db_info") ? "pg_db_info" : "pg_" + primaryName.substring(3);
             aliases.add(
                new RegisteredTool(
-                  new McpSchema.Tool(aliasName, primary.tool().description(), primary.tool().inputSchema()),
+                  new McpSchema.Tool(aliasName, primary.tool().title(), primary.tool().description(), primary.tool().inputSchema(), primary.tool().outputSchema(), primary.tool().annotations(), primary.tool().meta()),
                   primary.handler()
                )
             );
@@ -224,6 +238,7 @@ public class GenericMcpTools {
       return args -> {
          String sql = (String)args.get("sql");
          Optional<String> validation = this.dialect.safetyPolicy().validateReadOnly(sql);
+         // 只允许只读查询，避免把查询工具误用成写入入口。
          return validation.isPresent() ? ToolResults.error(validation.get()) : this.executeQuery(sql);
       };
    }
@@ -260,6 +275,7 @@ public class GenericMcpTools {
          }
 
          this.activeSchema = schema;
+         // 这里只更新服务端会话状态，真正执行时再通过 ConnectionManager 应用到连接。
          return ToolResults.success("Active schema set to: " + schema);
       };
    }
@@ -279,6 +295,7 @@ public class GenericMcpTools {
          @SuppressWarnings("unchecked")
          List<Map<String, Object>> columns = (List<Map<String, Object>>)args.get("columns");
          boolean ifNotExists = (Boolean)args.getOrDefault("ifNotExists", true);
+         // 已存在时直接返回成功，保持工具调用幂等。
          if (ifNotExists && this.objectExists(this.dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(schema), this.normalizeIdentifierValue(tableName)))) {
             return ToolResults.success("Table '" + schema + "." + tableName + "' already exists");
          }
@@ -428,6 +445,7 @@ public class GenericMcpTools {
          }
 
          try (Connection conn = this.connectionManager.getConnection(this.activeSchema)) {
+            // 先分别抓取两个 schema 快照，再交给通用 diff 引擎比较。
             SchemaSnapshot source = this.dialect.snapshotProvider().loadSnapshot(conn, sourceSchema);
             SchemaSnapshot target = this.dialect.snapshotProvider().loadSnapshot(conn, targetSchema);
             SchemaDiffResult result = this.schemaDiffEngine.compare(source, target);
@@ -447,6 +465,7 @@ public class GenericMcpTools {
       if (this.activeSchema != null && !this.activeSchema.isBlank()) {
          return this.activeSchema;
       }
+      // PostgreSQL 兜底到 public，Oracle 则允许返回空串交由方言层决定。
       return this.dialect.type() == DatabaseType.POSTGRES ? "public" : "";
    }
 
@@ -477,6 +496,7 @@ public class GenericMcpTools {
       }
 
       try (Connection conn = this.connectionManager.getConnection(this.activeSchema)) {
+         // 即使 SQL 由工具拼装，也仍然走统一安全校验和执行入口。
          this.executor.execute(conn, sql);
          return ToolResults.success(successMessage);
       } catch (SQLException ex) {
@@ -514,6 +534,7 @@ public class GenericMcpTools {
       try (Connection conn = this.connectionManager.getConnection(this.activeSchema)) {
          return !this.executor.query(conn, sqlOpt.get(), params).isEmpty();
       } catch (SQLException ex) {
+         // 存在性检查失败时按“不存在”处理，避免影响主流程的幂等判断。
          return false;
       }
    }
@@ -522,6 +543,7 @@ public class GenericMcpTools {
       if (value == null) {
          return null;
       }
+      // Oracle 系统视图通常以大写保存对象名，这里统一做一次归一化。
       return this.dialect.type() == DatabaseType.ORACLE ? value.toUpperCase() : value;
    }
 
