@@ -199,7 +199,7 @@ AI Client                         MCP Server
 │    "result": {
 │      "protocolVersion": "2024-11-05",
 │      "capabilities": { "tools": {} },
-│      "serverInfo": { "name": "postgres-mcp-server", "version": "1.0.0" }
+│      "serverInfo": { "name": "database-mcp-server", "version": "1.0.0" }
 │    }
 │  }
 │                                                                     │
