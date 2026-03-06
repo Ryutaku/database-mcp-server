@@ -138,14 +138,6 @@ target/database-mcp-server-1.0.0.jar
 | `DB_PASSWORD` | 否 | 空字符串 | 数据库密码 |
 | `DB_SCHEMA` | 否 | PostgreSQL 默认为 `public` | 默认活动 schema |
 
-兼容旧版 PostgreSQL 配置：
-
-- `PG_URL`
-- `PG_USER`
-- `PG_PASSWORD`
-
-当未显式提供 `DB_*` 且存在 `PG_URL` 时，程序会自动按 PostgreSQL 模式兼容启动。
-
 ### PostgreSQL 示例
 
 ```powershell

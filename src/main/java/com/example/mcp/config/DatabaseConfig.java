@@ -15,14 +15,6 @@ public record DatabaseConfig(DatabaseType type, String url, String username, Str
       String dbPassword = env.get("DB_PASSWORD");
       String dbSchema = env.get("DB_SCHEMA");
 
-      // 兼容早期 PostgreSQL 专用变量，避免老客户端配置立即失效。
-      if ((dbType == null || dbType.isBlank()) && dbUrl == null && env.get("PG_URL") != null) {
-         dbType = "postgres";
-         dbUrl = env.get("PG_URL");
-         dbUser = env.get("PG_USER");
-         dbPassword = env.get("PG_PASSWORD");
-      }
-
       DatabaseType type = DatabaseType.from(dbType);
       String defaultUrl = type == DatabaseType.ORACLE ? "jdbc:oracle:thin:@localhost:1521/FREEPDB1" : "jdbc:postgresql://localhost:5432/postgres";
       String defaultUser = type == DatabaseType.ORACLE ? "system" : "postgres";
