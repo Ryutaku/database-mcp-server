@@ -1,0 +1,76 @@
+server:
+  # Spring Boot HTTP 服务端口
+  port: 8080
+
+database-mcp:
+  http:
+    # MCP over HTTP 的服务地址
+    endpoint: /mcp
+
+    # streamable HTTP 会话保活间隔
+    keep-alive-interval: 60s
+
+    # 是否启用 MCP API Key 校验
+    # 默认关闭，便于内网联调
+    api-key-enabled: false
+
+    # 客户端传递 API Key 的请求头
+    api-key-header: X-API-Key
+
+    # API Key 签名密钥
+    # 只有 api-key-enabled=true 时才会实际参与校验
+    api-key-secret: change-me-secret
+    api-key-ttl-seconds: 300
+    api-key-allowed-clock-skew-seconds: 30
+
+    # 管理后台 API 地址与口令
+    # admin-password 留空时，默认口令就是服务器当天日期，格式 yyyy-MM-dd
+    admin-api-base-path: /admin/api
+    admin-password-header: X-Admin-Password
+    admin-password: ""
+
+    # SQLite 配置库存放路径
+    # 如果库为空，启动时会先用下面的样例配置初始化
+    config-db-path: data/database-mcp-config.db
+
+    # 基础 JDBC 配置
+    # Oracle 只支持 SID，不支持 serviceName
+    base-jdbc-configs:
+      pg-platform:
+        type: postgres
+        host: 127.0.0.1
+        port: 5432
+        database-name: platform
+        jdbc-params: applicationName=database-mcp-http
+
+      pg-report:
+        type: postgres
+        host: 127.0.0.1
+        port: 5432
+        database-name: report
+
+      oracle-main:
+        type: oracle
+        host: 127.0.0.1
+        port: 1521
+        sid: ORCL
+
+    # 数据源映射样例
+    datasources:
+      order-db:
+        base-config-id: pg-platform
+        username: order_user
+        password: change-me-order-password
+        schema: order_center
+
+      billing-db:
+        base-config-id: pg-platform
+        username: billing_user
+        password: change-me-billing-password
+        schema: billing_center
+
+      report-db:
+        base-config-id: oracle-main
+        username: report_user
+        password: change-me-report-password
+        schema: REPORT_APP

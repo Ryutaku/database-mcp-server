@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Database MCP Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Database MCP</p>
+        <h1>配置后台</h1>
+      </div>
+      <div class="topbar-actions">
+        <button id="reloadButton" class="button ghost" type="button">刷新</button>
+      </div>
+    </header>
+
+    <section class="intro">
+      <p>客户端只传 <code>datasourceId</code>。服务端用它定位数据源映射，再关联基础 JDBC 配置、用户名、密码和 schema。</p>
+      <p id="status" class="status">准备加载配置...</p>
+    </section>
+
+    <section class="layout nav-layout">
+      <aside class="side-nav">
+        <button class="nav-item active" type="button" data-view="base">基础 JDBC 配置</button>
+        <button class="nav-item" type="button" data-view="datasource">数据源映射</button>
+      </aside>
+
+      <article class="panel panel-view" data-panel="base">
+        <div class="panel-head">
+          <div>
+            <h2>基础 JDBC 配置</h2>
+            <p>只维护公共连接信息。账号密码不放在这里。Oracle 只支持 SID。</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <input id="baseConfigSearch" placeholder="搜索别名 / host / databaseName / sid">
+        </div>
+
+        <form id="baseConfigForm" class="compact-form">
+          <div class="form-grid">
+            <input name="id" placeholder="基础配置别名，例如 pg-platform" required>
+            <select name="type" required>
+              <option value="postgres">PostgreSQL</option>
+              <option value="oracle">Oracle</option>
+            </select>
+            <input name="host" placeholder="host" required>
+            <input name="port" placeholder="port" required>
+            <input name="databaseName" placeholder="databaseName（PostgreSQL）">
+            <input name="sid" placeholder="sid（Oracle）">
+            <input name="jdbcParams" placeholder="jdbc params，可选">
+          </div>
+          <div class="form-actions">
+            <button class="button primary" type="submit">保存基础配置</button>
+            <button id="cancelBaseEditButton" class="button ghost" type="button">取消编辑</button>
+          </div>
+        </form>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>别名</th>
+                <th>类型</th>
+                <th>主机</th>
+                <th>端口</th>
+                <th>目标</th>
+                <th>JDBC 参数</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="baseConfigTableBody"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel panel-view hidden" data-panel="datasource">
+        <div class="panel-head">
+          <div>
+            <h2>数据源映射</h2>
+            <p>这里维护 <code>datasourceId -> 基础配置别名 + 用户名 + 密码 + schema</code>。</p>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <input id="datasourceSearch" placeholder="搜索 datasourceId / 基础配置别名 / username / schema">
+        </div>
+
+        <form id="datasourceForm" class="compact-form">
+          <div class="form-grid datasource-grid">
+            <input name="id" placeholder="datasourceId，例如 order-db" required>
+            <select name="baseConfigId" id="baseConfigSelect" required>
+              <option value="">请选择基础配置别名</option>
+            </select>
+            <input name="username" placeholder="username" required>
+            <input name="password" placeholder="password">
+            <input name="schema" placeholder="schema，可选">
+          </div>
+          <div class="form-actions">
+            <button class="button primary" type="submit">保存数据源</button>
+            <button id="cancelDatasourceEditButton" class="button ghost" type="button">取消编辑</button>
+          </div>
+        </form>
+
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>datasourceId</th>
+                <th>基础配置别名</th>
+                <th>用户名</th>
+                <th>schema</th>
+                <th>解析后的目标</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="datasourceTableBody"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="footer-note">
+      <p>API Key: <code>clientId.timestamp.nonce.signature</code></p>
+      <p>签名: <code>Base64Url(HMAC_SHA256(secret, clientId.timestamp.nonce))</code></p>
+    </section>
+  </main>
+
+  <script src="admin.js"></script>
+</body>
+</html>
