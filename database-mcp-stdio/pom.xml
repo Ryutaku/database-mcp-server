@@ -6,7 +6,7 @@
 
     <parent>
         <groupId>com.hbnrtech</groupId>
-        <artifactId>database-mcp-server-parent</artifactId>
+        <artifactId>database-mcp-server</artifactId>
         <version>1.0.0</version>
     </parent>
 

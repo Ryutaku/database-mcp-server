@@ -211,6 +211,13 @@ select:focus {
   margin-top: 8px;
 }
 
+.field-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .button {
   border: 1px solid var(--line-strong);
   background: #171e27;

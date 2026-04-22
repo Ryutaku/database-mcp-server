@@ -9,6 +9,7 @@ const datasourceForm = document.getElementById("datasourceForm");
 const baseConfigSearchInput = document.getElementById("baseConfigSearch");
 const datasourceSearchInput = document.getElementById("datasourceSearch");
 const baseConfigSelect = document.getElementById("baseConfigSelect");
+const datasourceSchemaHint = document.getElementById("datasourceSchemaHint");
 const navItems = document.querySelectorAll(".nav-item");
 const panels = document.querySelectorAll(".panel-view");
 
@@ -20,6 +21,7 @@ document.getElementById("cancelBaseEditButton").addEventListener("click", resetB
 document.getElementById("cancelDatasourceEditButton").addEventListener("click", resetDatasourceForm);
 baseConfigSearchInput.addEventListener("input", () => renderBaseConfigs(currentBaseConfigs));
 datasourceSearchInput.addEventListener("input", () => renderDatasources(currentDatasources, currentBaseConfigs));
+baseConfigSelect.addEventListener("change", updateDatasourceSchemaHint);
 navItems.forEach((item) => item.addEventListener("click", () => switchView(item.dataset.view)));
 
 baseConfigForm.addEventListener("submit", async (event) => {
@@ -88,6 +90,7 @@ async function loadConfig(successMessage) {
     renderBaseConfigOptions(currentBaseConfigs);
     renderBaseConfigs(currentBaseConfigs);
     renderDatasources(currentDatasources, currentBaseConfigs);
+    updateDatasourceSchemaHint();
     setStatus(successMessage || `已加载 ${currentBaseConfigs.length} 个基础配置，${currentDatasources.length} 个数据源`);
   } catch (error) {
     setStatus(error.message, true);
@@ -159,16 +162,14 @@ function renderDatasources(datasources, baseConfigs) {
   const baseMap = new Map(baseConfigs.map((item) => [item.id, item]));
   for (const item of datasources.filter((config) => matchesDatasource(config, keyword))) {
     const base = baseMap.get(item.baseConfigId);
-    const targetName = base ? (base.databaseName || base.sid || "-") : "-";
-    const resolvedTarget = base
-      ? `${normalizeType(base.type)}://${base.host}:${base.port}/${targetName}`
-      : "基础配置不存在";
+    const resolvedTarget = buildResolvedTarget(base, item);
+    const schemaMode = item.schema || "跟随连接";
     const row = document.createElement("tr");
     row.innerHTML = `
       <td>${escapeHtml(item.id)}</td>
       <td>${escapeHtml(item.baseConfigId)}</td>
       <td>${escapeHtml(item.username || "-")}</td>
-      <td>${escapeHtml(item.schema || "-")}</td>
+      <td>${escapeHtml(schemaMode)}</td>
       <td>${escapeHtml(resolvedTarget)}</td>
       <td>
         <div class="row-actions">
@@ -221,7 +222,7 @@ function matchesDatasource(item, keyword) {
   if (!keyword) {
     return true;
   }
-  return [item.id, item.baseConfigId, item.username, item.schema]
+  return [item.id, item.baseConfigId, item.username]
     .some((value) => String(value || "").toLowerCase().includes(keyword));
 }
 
@@ -241,6 +242,7 @@ function fillDatasourceForm(item) {
   datasourceForm.elements.username.value = item.username || "";
   datasourceForm.elements.password.value = item.password || "";
   datasourceForm.elements.schema.value = item.schema || "";
+  updateDatasourceSchemaHint();
 }
 
 function resetBaseConfigForm() {
@@ -251,6 +253,7 @@ function resetBaseConfigForm() {
 function resetDatasourceForm() {
   datasourceForm.reset();
   datasourceForm.elements.baseConfigId.value = "";
+  updateDatasourceSchemaHint();
 }
 
 async function apiFetch(path, options = {}) {
@@ -298,6 +301,45 @@ function switchView(view) {
 
 function normalizeType(value) {
   return String(value || "").toLowerCase();
+}
+
+function buildResolvedTarget(base, datasource) {
+  if (!base) {
+    return "基础配置不存在";
+  }
+
+  const type = normalizeType(base.type);
+  const targetName = base.databaseName || base.sid || "-";
+  const baseTarget = `${type}://${base.host}:${base.port}/${targetName}`;
+
+  if (type !== "postgres") {
+    return baseTarget;
+  }
+
+  const params = new URLSearchParams(base.jdbcParams || "");
+  if (datasource?.schema) {
+    params.set("currentSchema", datasource.schema);
+  }
+
+  const query = params.toString();
+  return query ? `${baseTarget}?${query}` : baseTarget;
+}
+
+function updateDatasourceSchemaHint() {
+  if (!datasourceSchemaHint) {
+    return;
+  }
+  const base = currentBaseConfigs.find((item) => item.id === datasourceForm.elements.baseConfigId.value);
+  const type = normalizeType(base?.type);
+  if (type === "oracle") {
+    datasourceSchemaHint.textContent = "Oracle 数据源通常应留空 schema。只有明确需要 ALTER SESSION SET CURRENT_SCHEMA 时才填写。";
+    return;
+  }
+  if (type === "postgres") {
+    datasourceSchemaHint.textContent = "PostgreSQL 通常可由 JDBC URL、search_path 或连接默认 schema 决定。只有需要显式覆盖时才填写。";
+    return;
+  }
+  datasourceSchemaHint.textContent = "schema 是高级选项。默认建议留空，让连接自身决定当前 schema。";
 }
 
 function escapeHtml(value) {

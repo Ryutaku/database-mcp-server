@@ -2,6 +2,8 @@ package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.config.DatasourceConfig;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,9 +22,13 @@ public final class ConfigModels {
       String jdbcParams
    ) {
       public String jdbcUrl() {
+         return this.jdbcUrl(null);
+      }
+
+      public String jdbcUrl(String schema) {
          return switch (this.type) {
             case POSTGRES -> {
-               String suffix = this.jdbcParams == null || this.jdbcParams.isBlank() ? "" : "?" + this.jdbcParams;
+               String suffix = buildPostgresSuffix(this.jdbcParams, schema);
                yield "jdbc:postgresql://" + this.host + ":" + this.port + "/" + this.databaseName + suffix;
             }
             case ORACLE -> "jdbc:oracle:thin:@" + this.host + ":" + this.port + ":" + this.sid;
@@ -41,7 +47,7 @@ public final class ConfigModels {
          return new DatasourceConfig(
             this.id,
             baseConfig.type(),
-            baseConfig.jdbcUrl(),
+            baseConfig.jdbcUrl(this.schema),
             this.username(),
             this.password(),
             this.schema
@@ -93,5 +99,45 @@ public final class ConfigModels {
       boolean success,
       String message
    ) {
+   }
+
+   private static String buildPostgresSuffix(String jdbcParams, String schema) {
+      Map<String, String> params = new LinkedHashMap<>();
+      String normalizedParams = jdbcParams == null ? "" : jdbcParams.trim();
+      if (!normalizedParams.isBlank()) {
+         for (String entry : normalizedParams.split("&")) {
+            if (entry == null || entry.isBlank()) {
+               continue;
+            }
+            int separator = entry.indexOf('=');
+            if (separator < 0) {
+               params.put(entry, "");
+            } else {
+               params.put(entry.substring(0, separator), entry.substring(separator + 1));
+            }
+         }
+      }
+
+      if (schema != null && !schema.isBlank()) {
+         params.put("currentSchema", URLEncoder.encode(schema, StandardCharsets.UTF_8));
+      }
+
+      if (params.isEmpty()) {
+         return "";
+      }
+
+      StringBuilder suffix = new StringBuilder("?");
+      boolean first = true;
+      for (Map.Entry<String, String> entry : params.entrySet()) {
+         if (!first) {
+            suffix.append("&");
+         }
+         first = false;
+         suffix.append(entry.getKey());
+         if (!entry.getValue().isEmpty()) {
+            suffix.append("=").append(entry.getValue());
+         }
+      }
+      return suffix.toString();
    }
 }

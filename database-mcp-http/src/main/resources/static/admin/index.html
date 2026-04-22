@@ -22,7 +22,7 @@
     </header>
 
     <section class="intro">
-      <p>客户端只传 <code>datasourceId</code>。服务端用它定位数据源映射，再关联基础 JDBC 配置、用户名、密码和 schema。</p>
+      <p>客户端只需要传 <code>datasourceId</code>。服务端会根据它定位数据源映射，再关联基础 JDBC 配置、用户名和密码。常规场景下不需要额外配置 schema。</p>
       <p id="status" class="status">准备加载配置...</p>
     </section>
 
@@ -36,7 +36,7 @@
         <div class="panel-head">
           <div>
             <h2>基础 JDBC 配置</h2>
-            <p>只维护公共连接信息。账号密码不放在这里。Oracle 只支持 SID。</p>
+            <p>这里只维护公共连接信息。账号密码不放在这里。Oracle 当前只支持 SID。</p>
           </div>
         </div>
 
@@ -85,12 +85,12 @@
         <div class="panel-head">
           <div>
             <h2>数据源映射</h2>
-            <p>这里维护 <code>datasourceId -> 基础配置别名 + 用户名 + 密码 + schema</code>。</p>
+            <p>这里维护 <code>datasourceId -> 基础配置别名 + 用户名 + 密码</code>。schema 只是高级选项，默认建议留空。</p>
           </div>
         </div>
 
         <div class="toolbar">
-          <input id="datasourceSearch" placeholder="搜索 datasourceId / 基础配置别名 / username / schema">
+          <input id="datasourceSearch" placeholder="搜索 datasourceId / 基础配置别名 / username">
         </div>
 
         <form id="datasourceForm" class="compact-form">
@@ -101,8 +101,9 @@
             </select>
             <input name="username" placeholder="username" required>
             <input name="password" placeholder="password">
-            <input name="schema" placeholder="schema，可选">
+            <input name="schema" placeholder="默认留空；仅在需要强制覆盖当前 schema 时填写">
           </div>
+          <p id="datasourceSchemaHint" class="field-hint">schema 是高级选项。PostgreSQL 通常可由 JDBC URL 或 search_path 决定；Oracle 通常应留空，避免把 CURRENT_SCHEMA 当作 owner switch。</p>
           <div class="form-actions">
             <button class="button primary" type="submit">保存数据源</button>
             <button id="cancelDatasourceEditButton" class="button ghost" type="button">取消编辑</button>
@@ -116,7 +117,7 @@
                 <th>datasourceId</th>
                 <th>基础配置别名</th>
                 <th>用户名</th>
-                <th>schema</th>
+                <th>schema 覆盖</th>
                 <th>解析后的目标</th>
                 <th>操作</th>
               </tr>

@@ -79,7 +79,7 @@ public class PostgresDialect implements DatabaseDialect {
          + "       (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = t.table_schema AND table_name = t.table_name) AS column_count\n"
          + "FROM information_schema.tables t\n"
          + "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = (quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass::oid AND pgd.objsubid = 0\n"
-         + "WHERE t.table_schema = ? AND t.table_type = 'BASE TABLE'\n"
+         + "WHERE t.table_schema = current_schema() AND t.table_type = 'BASE TABLE'\n"
          + "ORDER BY t.table_name";
    }
 
@@ -90,7 +90,7 @@ public class PostgresDialect implements DatabaseDialect {
          + "FROM information_schema.columns c\n"
          + "LEFT JOIN pg_catalog.pg_statio_all_tables st ON c.table_schema = st.schemaname AND c.table_name = st.relname\n"
          + "LEFT JOIN pg_catalog.pg_description pgd ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position\n"
-         + "WHERE c.table_schema = ? AND c.table_name = ?\n"
+         + "WHERE c.table_schema = current_schema() AND c.table_name = ?\n"
          + "ORDER BY c.ordinal_position";
    }
 
@@ -119,7 +119,7 @@ public class PostgresDialect implements DatabaseDialect {
                + "       pg_size_pretty(pg_relation_size(indexrelid)) AS index_size\n"
                + "FROM pg_indexes\n"
                + "JOIN pg_class ON pg_class.relname = indexname\n"
-               + "WHERE schemaname = ? AND tablename = ?\n"
+               + "WHERE schemaname = current_schema() AND tablename = ?\n"
                + "ORDER BY indexname"
          );
       }
@@ -127,7 +127,7 @@ public class PostgresDialect implements DatabaseDialect {
       return Optional.of(
          "SELECT schemaname, tablename, indexname AS index_name, indexdef AS index_definition\n"
             + "FROM pg_indexes\n"
-            + "WHERE schemaname = ?\n"
+            + "WHERE schemaname = current_schema()\n"
             + "ORDER BY tablename, indexname"
       );
    }
@@ -139,7 +139,7 @@ public class PostgresDialect implements DatabaseDialect {
             "SELECT schemaname, relname AS table_name, indexrelname AS index_name,\n"
                + "       idx_scan AS index_scans, idx_tup_read AS tuples_read, idx_tup_fetch AS tuples_fetched\n"
                + "FROM pg_stat_user_indexes\n"
-               + "WHERE schemaname = ? AND relname = ?\n"
+               + "WHERE schemaname = current_schema() AND relname = ?\n"
                + "ORDER BY idx_scan DESC"
          );
       }
@@ -148,7 +148,7 @@ public class PostgresDialect implements DatabaseDialect {
          "SELECT schemaname, relname AS table_name, indexrelname AS index_name,\n"
             + "       idx_scan AS index_scans, idx_tup_read AS tuples_read, idx_tup_fetch AS tuples_fetched\n"
             + "FROM pg_stat_user_indexes\n"
-            + "WHERE schemaname = ?\n"
+            + "WHERE schemaname = current_schema()\n"
             + "ORDER BY idx_scan DESC"
       );
    }
@@ -160,12 +160,12 @@ public class PostgresDialect implements DatabaseDialect {
 
    @Override
    public Optional<String> sqlTableExists() {
-      return Optional.of("SELECT 1 FROM information_schema.tables WHERE table_schema = ? AND table_name = ?");
+      return Optional.of("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?");
    }
 
    @Override
    public Optional<String> sqlIndexExists() {
-      return Optional.of("SELECT 1 FROM pg_indexes WHERE schemaname = ? AND indexname = ?");
+      return Optional.of("SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = ?");
    }
 
    @Override
@@ -180,7 +180,7 @@ public class PostgresDialect implements DatabaseDialect {
          sql.append("IF NOT EXISTS ");
       }
 
-      sql.append(this.quoteIdentifier(schema)).append(".").append(this.quoteIdentifier(tableName)).append(" (");
+      sql.append(this.quoteIdentifier(tableName)).append(" (");
       List<String> columnDefs = new ArrayList<>();
 
       for (Map<String, Object> col : columns) {
@@ -208,7 +208,7 @@ public class PostgresDialect implements DatabaseDialect {
 
    @Override
    public String buildAlterTableSql(String schema, String tableName, String action, Map<String, Object> args) {
-      String fullTableName = this.quoteIdentifier(schema) + "." + this.quoteIdentifier(tableName);
+      String fullTableName = this.quoteIdentifier(tableName);
       StringBuilder sql = new StringBuilder("ALTER TABLE ").append(fullTableName).append(" ");
       switch (action) {
          case "add_column" -> {
@@ -246,8 +246,6 @@ public class PostgresDialect implements DatabaseDialect {
    public String buildDropTableSql(String schema, String tableName, boolean ifExists, boolean cascade) {
       return "DROP TABLE "
          + (ifExists ? "IF EXISTS " : "")
-         + this.quoteIdentifier(schema)
-         + "."
          + this.quoteIdentifier(tableName)
          + (cascade ? " CASCADE" : "");
    }
@@ -259,8 +257,6 @@ public class PostgresDialect implements DatabaseDialect {
          + (ifNotExists ? "IF NOT EXISTS " : "")
          + this.quoteIdentifier(indexName)
          + " ON "
-         + this.quoteIdentifier(schema)
-         + "."
          + this.quoteIdentifier(tableName)
          + " ("
          + cols
@@ -269,7 +265,7 @@ public class PostgresDialect implements DatabaseDialect {
 
    @Override
    public String buildDropIndexSql(String schema, String indexName, boolean ifExists) {
-      return "DROP INDEX " + (ifExists ? "IF EXISTS " : "") + this.quoteIdentifier(schema) + "." + this.quoteIdentifier(indexName);
+      return "DROP INDEX " + (ifExists ? "IF EXISTS " : "") + this.quoteIdentifier(indexName);
    }
 
    @Override

@@ -19,6 +19,6 @@ class PostgresDialectTest {
    @Test
    void buildsPostgresSpecificAlterTableSql() {
       String sql = dialect.buildAlterTableSql("public", "users", "alter_column", java.util.Map.of("columnDef", java.util.Map.of("name", "name", "type", "varchar(255)")));
-      assertEquals("ALTER TABLE \"public\".\"users\" ALTER COLUMN \"name\" TYPE varchar(255)", sql);
+      assertEquals("ALTER TABLE \"users\" ALTER COLUMN \"name\" TYPE varchar(255)", sql);
    }
 }

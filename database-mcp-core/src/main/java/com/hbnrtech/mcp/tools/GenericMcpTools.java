@@ -71,20 +71,17 @@ public class GenericMcpTools {
            "required": ["schema"]
          }
          """), this.switchSchemaHandler()));
-      tools.add(new RegisteredTool(this.tool("db_list_tables", "List tables in a schema", """
+      tools.add(new RegisteredTool(this.tool("db_list_tables", "List tables in the current schema context", """
          {
            "type": "object",
-           "properties": {
-             "schema": {"type": "string"}
-           }
+           "properties": {}
          }
          """), this.listTablesHandler()));
-      tools.add(new RegisteredTool(this.tool("db_describe_table", "Describe table columns and metadata", """
+      tools.add(new RegisteredTool(this.tool("db_describe_table", "Describe table columns and metadata in the current schema context", """
          {
            "type": "object",
            "properties": {
-             "tableName": {"type": "string"},
-             "schema": {"type": "string"}
+             "tableName": {"type": "string"}
            },
            "required": ["tableName"]
          }
@@ -94,7 +91,6 @@ public class GenericMcpTools {
            "type": "object",
            "properties": {
              "tableName": {"type": "string"},
-             "schema": {"type": "string"},
              "columns": {"type": "array", "items": {"type": "object"}},
              "ifNotExists": {"type": "boolean", "default": true}
            },
@@ -106,7 +102,6 @@ public class GenericMcpTools {
            "type": "object",
            "properties": {
              "tableName": {"type": "string"},
-             "schema": {"type": "string"},
              "action": {"type": "string"},
              "columnDef": {"type": "object"},
              "columnName": {"type": "string"},
@@ -122,7 +117,6 @@ public class GenericMcpTools {
            "type": "object",
            "properties": {
              "tableName": {"type": "string"},
-             "schema": {"type": "string"},
              "ifExists": {"type": "boolean", "default": true},
              "cascade": {"type": "boolean", "default": false}
            },
@@ -133,8 +127,7 @@ public class GenericMcpTools {
          {
            "type": "object",
            "properties": {
-             "tableName": {"type": "string"},
-             "schema": {"type": "string"}
+             "tableName": {"type": "string"}
            },
            "required": ["tableName"]
          }
@@ -143,8 +136,7 @@ public class GenericMcpTools {
          {
            "type": "object",
            "properties": {
-             "tableName": {"type": "string"},
-             "schema": {"type": "string"}
+             "tableName": {"type": "string"}
            }
          }
          """), this.listIndexesHandler()));
@@ -154,7 +146,6 @@ public class GenericMcpTools {
            "properties": {
              "indexName": {"type": "string"},
              "tableName": {"type": "string"},
-             "schema": {"type": "string"},
              "columns": {"type": "array", "items": {"type": "string"}},
              "unique": {"type": "boolean", "default": false},
              "ifNotExists": {"type": "boolean", "default": true}
@@ -167,7 +158,6 @@ public class GenericMcpTools {
            "type": "object",
            "properties": {
              "indexName": {"type": "string"},
-             "schema": {"type": "string"},
              "ifExists": {"type": "boolean", "default": true}
            },
            "required": ["indexName"]
@@ -177,8 +167,7 @@ public class GenericMcpTools {
          {
            "type": "object",
            "properties": {
-             "tableName": {"type": "string"},
-             "schema": {"type": "string"}
+             "tableName": {"type": "string"}
            }
          }
          """), this.analyzeIndexHandler()));
@@ -293,13 +282,13 @@ public class GenericMcpTools {
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> listTablesHandler() {
       return this.withDatasource((exchange, args, context) ->
-         this.executePreparedQuery(context, this.activeSchema(exchange, args, context), context.dialect().sqlListTables(), List.of(this.schemaArg(exchange, args, context)))
+         this.executePreparedQuery(context, this.activeSchema(exchange, args, context), context.dialect().sqlListTables(), List.of())
       );
    }
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> describeTableHandler() {
       return this.withDatasource((exchange, args, context) ->
-         this.executePreparedQuery(context, this.activeSchema(exchange, args, context), context.dialect().sqlDescribeTable(), List.of(this.schemaArg(exchange, args, context), args.get("tableName")))
+         this.executePreparedQuery(context, this.activeSchema(exchange, args, context), context.dialect().sqlDescribeTable(), List.of(args.get("tableName")))
       );
    }
 
@@ -307,24 +296,22 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          @SuppressWarnings("unchecked")
          List<Map<String, Object>> columns = (List<Map<String, Object>>) args.get("columns");
          boolean ifNotExists = (Boolean) args.getOrDefault("ifNotExists", true);
-         if (ifNotExists && this.objectExists(context, activeSchema, dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(dialect, schema), this.normalizeIdentifierValue(dialect, tableName)))) {
-            return ToolResults.success("Table '" + schema + "." + tableName + "' already exists");
+         if (ifNotExists && this.objectExists(context, activeSchema, dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(dialect, tableName)))) {
+            return ToolResults.success("Table '" + tableName + "' already exists");
          }
-         return this.executeDdl(context, activeSchema, dialect.buildCreateTableSql(schema, tableName, columns, ifNotExists), "Table '" + schema + "." + tableName + "' created successfully");
+         return this.executeDdl(context, activeSchema, dialect.buildCreateTableSql(null, tableName, columns, ifNotExists), "Table '" + tableName + "' created successfully");
       });
    }
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> alterTableHandler() {
       return this.withDatasource((exchange, args, context) -> {
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          String action = (String) args.get("action");
-         return this.executeDdl(context, this.activeSchema(exchange, args, context), context.dialect().buildAlterTableSql(schema, tableName, action, args), "Table '" + schema + "." + tableName + "' altered successfully");
+         return this.executeDdl(context, this.activeSchema(exchange, args, context), context.dialect().buildAlterTableSql(null, tableName, action, args), "Table '" + tableName + "' altered successfully");
       });
    }
 
@@ -332,14 +319,13 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          boolean ifExists = (Boolean) args.getOrDefault("ifExists", true);
          boolean cascade = (Boolean) args.getOrDefault("cascade", false);
-         if (ifExists && !this.objectExists(context, activeSchema, dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(dialect, schema), this.normalizeIdentifierValue(dialect, tableName)))) {
-            return ToolResults.success("Table '" + schema + "." + tableName + "' does not exist");
+         if (ifExists && !this.objectExists(context, activeSchema, dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(dialect, tableName)))) {
+            return ToolResults.success("Table '" + tableName + "' does not exist");
          }
-         return this.executeDdl(context, activeSchema, dialect.buildDropTableSql(schema, tableName, ifExists, cascade), "Table '" + schema + "." + tableName + "' dropped successfully");
+         return this.executeDdl(context, activeSchema, dialect.buildDropTableSql(null, tableName, ifExists, cascade), "Table '" + tableName + "' dropped successfully");
       });
    }
 
@@ -350,10 +336,9 @@ public class GenericMcpTools {
             return ToolResults.error("DDL generation is not implemented for " + dialect.type());
          }
 
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          try (Connection conn = context.connectionManager().getConnection(this.activeSchema(exchange, args, context))) {
-            return ToolResults.success(dialect.snapshotProvider().buildTableDdl(conn, schema, tableName));
+            return ToolResults.success(dialect.snapshotProvider().buildTableDdl(conn, null, tableName));
          } catch (SQLException ex) {
             return ToolResults.error("Failed to generate DDL: " + ex.getMessage());
          }
@@ -362,7 +347,6 @@ public class GenericMcpTools {
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> listIndexesHandler() {
       return this.withDatasource((exchange, args, context) -> {
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          boolean hasTableFilter = tableName != null && !tableName.isBlank();
          Optional<String> sql = context.dialect().sqlListIndexes(hasTableFilter);
@@ -371,8 +355,8 @@ public class GenericMcpTools {
          }
 
          return hasTableFilter
-            ? this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(schema, tableName))
-            : this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(schema));
+            ? this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(tableName))
+            : this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of());
       });
    }
 
@@ -380,17 +364,16 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          String indexName = (String) args.get("indexName");
          @SuppressWarnings("unchecked")
          List<String> columns = (List<String>) args.get("columns");
          boolean unique = (Boolean) args.getOrDefault("unique", false);
          boolean ifNotExists = (Boolean) args.getOrDefault("ifNotExists", true);
-         if (ifNotExists && this.objectExists(context, activeSchema, dialect.sqlIndexExists(), List.of(this.normalizeIdentifierValue(dialect, schema), this.normalizeIdentifierValue(dialect, indexName)))) {
+         if (ifNotExists && this.objectExists(context, activeSchema, dialect.sqlIndexExists(), List.of(this.normalizeIdentifierValue(dialect, indexName)))) {
             return ToolResults.success("Index '" + indexName + "' already exists");
          }
-         return this.executeDdl(context, activeSchema, dialect.buildCreateIndexSql(schema, tableName, indexName, columns, unique, ifNotExists), "Index '" + indexName + "' created successfully");
+         return this.executeDdl(context, activeSchema, dialect.buildCreateIndexSql(null, tableName, indexName, columns, unique, ifNotExists), "Index '" + indexName + "' created successfully");
       });
    }
 
@@ -398,13 +381,12 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
-         String schema = this.schemaArg(exchange, args, context);
          String indexName = (String) args.get("indexName");
          boolean ifExists = (Boolean) args.getOrDefault("ifExists", true);
-         if (ifExists && !this.objectExists(context, activeSchema, dialect.sqlIndexExists(), List.of(this.normalizeIdentifierValue(dialect, schema), this.normalizeIdentifierValue(dialect, indexName)))) {
+         if (ifExists && !this.objectExists(context, activeSchema, dialect.sqlIndexExists(), List.of(this.normalizeIdentifierValue(dialect, indexName)))) {
             return ToolResults.success("Index '" + indexName + "' does not exist");
          }
-         return this.executeDdl(context, activeSchema, dialect.buildDropIndexSql(schema, indexName, ifExists), "Index '" + indexName + "' dropped successfully");
+         return this.executeDdl(context, activeSchema, dialect.buildDropIndexSql(null, indexName, ifExists), "Index '" + indexName + "' dropped successfully");
       });
    }
 
@@ -415,7 +397,6 @@ public class GenericMcpTools {
             return ToolResults.error("Index analysis is not supported for " + dialect.type());
          }
 
-         String schema = this.schemaArg(exchange, args, context);
          String tableName = (String) args.get("tableName");
          boolean hasTableFilter = tableName != null && !tableName.isBlank();
          Optional<String> sql = dialect.sqlAnalyzeIndexes(hasTableFilter);
@@ -424,8 +405,8 @@ public class GenericMcpTools {
          }
 
          return hasTableFilter
-            ? this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(schema, tableName))
-            : this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(schema));
+            ? this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of(tableName))
+            : this.executePreparedQuery(context, this.activeSchema(exchange, args, context), sql.get(), List.of());
       });
    }
 
@@ -492,7 +473,11 @@ public class GenericMcpTools {
       return this.datasourceRegistry.getRequired(value);
    }
 
-   private String schemaArg(McpSyncServerExchange exchange, Map<String, Object> args, DatasourceContext context) {
+   private String activeSchema(McpSyncServerExchange exchange, Map<String, Object> args, DatasourceContext context) {
+      return this.configuredSchema(exchange, args, context);
+   }
+
+   private String configuredSchema(McpSyncServerExchange exchange, Map<String, Object> args, DatasourceContext context) {
       Object schema = args.get("schema");
       if (schema instanceof String value && !value.isBlank()) {
          return value;
@@ -507,11 +492,7 @@ public class GenericMcpTools {
          return context.config().defaultSchema();
       }
 
-      return context.dialect().type() == DatabaseType.POSTGRES ? "public" : "";
-   }
-
-   private String activeSchema(McpSyncServerExchange exchange, Map<String, Object> args, DatasourceContext context) {
-      return this.schemaArg(exchange, args, context);
+      return null;
    }
 
    private String sessionDatasourceKey(McpSyncServerExchange exchange, String datasourceId) {

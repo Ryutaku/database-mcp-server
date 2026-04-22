@@ -21,22 +21,24 @@ import java.util.Map;
 public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
    @Override
    public SchemaSnapshot loadSnapshot(Connection connection, String schema) throws SQLException {
+      String resolvedSchema = this.resolveSchema(connection, schema);
       return new SchemaSnapshot(
-         schema,
-         this.getTables(connection, schema),
-         this.getIndexes(connection, schema),
-         this.getConstraints(connection, schema),
-         this.getViews(connection, schema),
-         this.getRoutines(connection, schema),
-         this.getSequences(connection, schema)
+         resolvedSchema,
+         this.getTables(connection, resolvedSchema),
+         this.getIndexes(connection, resolvedSchema),
+         this.getConstraints(connection, resolvedSchema),
+         this.getViews(connection, resolvedSchema),
+         this.getRoutines(connection, resolvedSchema),
+         this.getSequences(connection, resolvedSchema)
       );
    }
 
    @Override
    public String buildTableDdl(Connection connection, String schema, String tableName) throws SQLException {
+      String resolvedSchema = this.resolveSchema(connection, schema);
       StringBuilder sb = new StringBuilder();
-      sb.append("CREATE TABLE ").append(this.quoteIdentifier(schema)).append(".").append(this.quoteIdentifier(tableName)).append(" (\n");
-      Map<String, ColumnDef> columns = this.getColumns(connection, schema, tableName);
+      sb.append("CREATE TABLE ").append(this.quoteIdentifier(resolvedSchema)).append(".").append(this.quoteIdentifier(tableName)).append(" (\n");
+      Map<String, ColumnDef> columns = this.getColumns(connection, resolvedSchema, tableName);
       List<String> colDefs = new ArrayList<>();
 
       for (ColumnDef col : columns.values()) {
@@ -208,5 +210,16 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
    private String quoteIdentifier(String identifier) {
       return "\"" + identifier.replace("\"", "\"\"") + "\"";
+   }
+
+   private String resolveSchema(Connection connection, String schema) throws SQLException {
+      if (schema != null && !schema.isBlank()) {
+         return schema;
+      }
+      String currentSchema = connection.getSchema();
+      if (currentSchema != null && !currentSchema.isBlank()) {
+         return currentSchema;
+      }
+      throw new SQLException("Unable to determine PostgreSQL current schema");
    }
 }

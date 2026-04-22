@@ -27,6 +27,6 @@ class OracleDialectTest {
    @Test
    void buildsOracleSpecificAlterTableSql() {
       String sql = dialect.buildAlterTableSql("APP", "USERS", "alter_column", java.util.Map.of("columnDef", java.util.Map.of("name", "NAME", "type", "VARCHAR2(255)")));
-      assertEquals("ALTER TABLE \"APP\".\"USERS\" MODIFY (\"NAME\" VARCHAR2(255))", sql);
+      assertEquals("ALTER TABLE \"USERS\" MODIFY (\"NAME\" VARCHAR2(255))", sql);
    }
 }

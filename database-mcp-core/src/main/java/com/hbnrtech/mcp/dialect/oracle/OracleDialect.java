@@ -68,7 +68,7 @@ public class OracleDialect implements DatabaseDialect {
       return "SELECT table_name, NULL AS table_comment,\n"
          + "       (SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner = t.owner AND c.table_name = t.table_name) AS column_count\n"
          + "FROM all_tables t\n"
-         + "WHERE owner = ?\n"
+         + "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')\n"
          + "ORDER BY table_name";
    }
 
@@ -80,7 +80,7 @@ public class OracleDialect implements DatabaseDialect {
          + "       c.data_default AS column_default, cc.comments AS column_comment\n"
          + "FROM all_tab_columns c\n"
          + "LEFT JOIN all_col_comments cc ON cc.owner = c.owner AND cc.table_name = c.table_name AND cc.column_name = c.column_name\n"
-         + "WHERE c.owner = ? AND c.table_name = ?\n"
+         + "WHERE c.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND c.table_name = ?\n"
          + "ORDER BY c.column_id";
    }
 
@@ -109,7 +109,7 @@ public class OracleDialect implements DatabaseDialect {
                + "       i.uniqueness AS uniqueness\n"
                + "FROM all_indexes i\n"
                + "JOIN all_ind_columns c ON c.index_owner = i.owner AND c.index_name = i.index_name\n"
-               + "WHERE i.owner = ? AND i.table_name = ?\n"
+               + "WHERE i.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND i.table_name = ?\n"
                + "GROUP BY i.index_name, i.uniqueness\n"
                + "ORDER BY i.index_name"
          );
@@ -121,7 +121,7 @@ public class OracleDialect implements DatabaseDialect {
             + "       i.uniqueness AS uniqueness\n"
             + "FROM all_indexes i\n"
             + "JOIN all_ind_columns c ON c.index_owner = i.owner AND c.index_name = i.index_name\n"
-            + "WHERE i.owner = ?\n"
+            + "WHERE i.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')\n"
             + "GROUP BY i.table_name, i.index_name, i.uniqueness\n"
             + "ORDER BY i.table_name, i.index_name"
       );
@@ -139,12 +139,12 @@ public class OracleDialect implements DatabaseDialect {
 
    @Override
    public Optional<String> sqlTableExists() {
-      return Optional.of("SELECT 1 FROM all_tables WHERE owner = ? AND table_name = ?");
+      return Optional.of("SELECT 1 FROM all_tables WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND table_name = ?");
    }
 
    @Override
    public Optional<String> sqlIndexExists() {
-      return Optional.of("SELECT 1 FROM all_indexes WHERE owner = ? AND index_name = ?");
+      return Optional.of("SELECT 1 FROM all_indexes WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AND index_name = ?");
    }
 
    @Override
@@ -155,7 +155,7 @@ public class OracleDialect implements DatabaseDialect {
    @Override
    public String buildCreateTableSql(String schema, String tableName, List<Map<String, Object>> columns, boolean ifNotExists) {
       StringBuilder sql = new StringBuilder("CREATE TABLE ");
-      sql.append(this.quoteIdentifier(schema)).append(".").append(this.quoteIdentifier(tableName)).append(" (");
+      sql.append(this.quoteIdentifier(tableName)).append(" (");
       boolean first = true;
       for (Map<String, Object> col : columns) {
          if (!first) {
@@ -176,7 +176,7 @@ public class OracleDialect implements DatabaseDialect {
 
    @Override
    public String buildAlterTableSql(String schema, String tableName, String action, Map<String, Object> args) {
-      String fullTableName = this.quoteIdentifier(schema) + "." + this.quoteIdentifier(tableName);
+      String fullTableName = this.quoteIdentifier(tableName);
       return switch (action) {
          case "add_column" -> {
             Map<String, Object> colDef = castMap(args.get("columnDef"));
@@ -220,19 +220,15 @@ public class OracleDialect implements DatabaseDialect {
 
    @Override
    public String buildDropTableSql(String schema, String tableName, boolean ifExists, boolean cascade) {
-      return "DROP TABLE " + this.quoteIdentifier(schema) + "." + this.quoteIdentifier(tableName) + (cascade ? " CASCADE CONSTRAINTS" : "");
+      return "DROP TABLE " + this.quoteIdentifier(tableName) + (cascade ? " CASCADE CONSTRAINTS" : "");
    }
 
    @Override
    public String buildCreateIndexSql(String schema, String tableName, String indexName, List<String> columns, boolean unique, boolean ifNotExists) {
       String cols = String.join(", ", columns.stream().map(this::quoteIdentifier).toList());
       return (unique ? "CREATE UNIQUE INDEX " : "CREATE INDEX ")
-         + this.quoteIdentifier(schema)
-         + "."
          + this.quoteIdentifier(indexName)
          + " ON "
-         + this.quoteIdentifier(schema)
-         + "."
          + this.quoteIdentifier(tableName)
          + " ("
          + cols
@@ -241,7 +237,7 @@ public class OracleDialect implements DatabaseDialect {
 
    @Override
    public String buildDropIndexSql(String schema, String indexName, boolean ifExists) {
-      return "DROP INDEX " + this.quoteIdentifier(schema) + "." + this.quoteIdentifier(indexName);
+      return "DROP INDEX " + this.quoteIdentifier(indexName);
    }
 
    @Override
