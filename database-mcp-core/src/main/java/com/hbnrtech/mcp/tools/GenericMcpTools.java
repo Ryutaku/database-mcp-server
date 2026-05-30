@@ -222,7 +222,8 @@ public class GenericMcpTools {
          if (!present) {
             required.add("datasourceId");
          }
-         return TOOL_SCHEMA_MAPPER.convertValue(root, new TypeReference<McpSchema.JsonSchema>() { });
+         return TOOL_SCHEMA_MAPPER.convertValue(root, new TypeReference<>() {
+         });
       } catch (JsonProcessingException ex) {
          throw new IllegalArgumentException("Invalid tool schema JSON", ex);
       }
@@ -244,7 +245,7 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          String sql = (String) args.get("sql");
          Optional<String> validation = context.dialect().safetyPolicy().validateReadOnly(sql);
-         return validation.isPresent() ? ToolResults.error(validation.get()) : this.executeQuery(context, this.activeSchema(exchange, args, context), sql);
+         return validation.map(ToolResults::error).orElseGet(() -> this.executeQuery(context, this.activeSchema(exchange, args, context), sql));
       });
    }
 
@@ -307,7 +308,6 @@ public class GenericMcpTools {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
          String tableName = (String) args.get("tableName");
-         @SuppressWarnings("unchecked")
          List<Map<String, Object>> columns = (List<Map<String, Object>>) args.get("columns");
          boolean ifNotExists = (Boolean) args.getOrDefault("ifNotExists", true);
          if (ifNotExists && this.objectExists(context, activeSchema, dialect.sqlTableExists(), List.of(this.normalizeIdentifierValue(dialect, tableName)))) {
@@ -376,7 +376,6 @@ public class GenericMcpTools {
          String activeSchema = this.activeSchema(exchange, args, context);
          String tableName = (String) args.get("tableName");
          String indexName = (String) args.get("indexName");
-         @SuppressWarnings("unchecked")
          List<String> columns = (List<String>) args.get("columns");
          boolean unique = (Boolean) args.getOrDefault("unique", false);
          boolean ifNotExists = (Boolean) args.getOrDefault("ifNotExists", true);
@@ -424,7 +423,7 @@ public class GenericMcpTools {
       return this.withDatasource((exchange, args, context) -> {
          String sql = (String) args.get("sql");
          Optional<String> validation = context.dialect().safetyPolicy().validateExecute(sql);
-         return validation.isPresent() ? ToolResults.error(validation.get()) : this.executeSql(context, this.activeSchema(exchange, args, context), sql);
+         return validation.map(ToolResults::error).orElseGet(() -> this.executeSql(context, this.activeSchema(exchange, args, context), sql));
       });
    }
 
