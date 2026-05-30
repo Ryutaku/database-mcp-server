@@ -220,6 +220,12 @@
 
   function openModal(el) {
     if (!el) return;
+    var modal = el.querySelector(".Overlay");
+    if (modal) {
+      modal.style.transform = ""; // Reset transform on open
+      modal._tx = 0;
+      modal._ty = 0;
+    }
     el.classList.add("show");
     document.body.style.overflow = "hidden";
   }
@@ -231,6 +237,58 @@
       document.body.style.overflow = "";
     }
   }
+
+  /* --- Modal Drag Logic --- */
+  var isDragging = false;
+  var dragTarget = null;
+  var dragStartX = 0, dragStartY = 0;
+  var initialTx = 0, initialTy = 0;
+
+  document.addEventListener("mousedown", function(e) {
+    var header = e.target.closest(".Overlay-header");
+    if (!header) return;
+    if (e.target.closest("button") || e.target.closest(".btn") || e.target.closest("input")) return;
+
+    dragTarget = header.closest(".Overlay");
+    if (!dragTarget) return;
+
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+
+    // Use custom properties to track translation instead of parsing CSS matrices
+    initialTx = dragTarget._tx || 0;
+    initialTy = dragTarget._ty || 0;
+
+    dragTarget.style.transition = "none";
+  });
+
+  document.addEventListener("mousemove", function(e) {
+    if (!isDragging || !dragTarget) return;
+    
+    // Prevent text selection while dragging
+    e.preventDefault();
+
+    var dx = e.clientX - dragStartX;
+    var dy = e.clientY - dragStartY;
+    
+    var newTx = initialTx + dx;
+    var newTy = initialTy + dy;
+    
+    dragTarget._tx = newTx;
+    dragTarget._ty = newTy;
+    
+    // Apply new translation inline (this overrides the default CSS scale/translate)
+    dragTarget.style.transform = "translate(" + newTx + "px, " + newTy + "px) scale(1)";
+  });
+
+  document.addEventListener("mouseup", function() {
+    if (isDragging && dragTarget) {
+      dragTarget.style.transition = "";
+    }
+    isDragging = false;
+    dragTarget = null;
+  });
 
   /* =========================================================
      TOAST
