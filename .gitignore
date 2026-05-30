@@ -32,3 +32,6 @@ Thumbs.db
 .DS_Store
 hs_err_pid*
 replay_pid*
+/data/database-mcp-config.db
+/database-mcp-core/src/test/java/com/hbnrtech/mcp/schema/oracle/OracleSchemaSnapshotProviderTest.java
+/database-mcp-core/src/test/java/com/hbnrtech/mcp/schema/postgres/PostgresSchemaSnapshotProviderTest.java
