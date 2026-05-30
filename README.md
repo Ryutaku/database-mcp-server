@@ -131,32 +131,9 @@ HTTP 模式不是直接把 JDBC 连接暴露给客户端，而是通过 `datasou
 - 多个数据源可以复用同一套基础 JDBC 地址配置
 - 数据源可以绑定各自独立的用户名、密码、默认 Schema
 
-### 5.1 两层配置
+### 5.1 SQLite 配置库
 
-HTTP 服务维护两类配置：
-
-- 基础 JDBC 配置 `base-jdbc-configs`
-- 数据源配置 `datasources`
-
-基础 JDBC 配置负责：
-
-- 数据库类型
-- 主机
-- 端口
-- 数据库名或 Oracle SID
-- 可选 JDBC 参数
-
-数据源配置负责：
-
-- `datasourceId`
-- 引用哪个 `baseConfigId`
-- 用户名
-- 密码
-- 默认 Schema
-
-### 5.2 SQLite 配置库
-
-HTTP 服务会把配置持久化到 SQLite。
+HTTP 服务会把所有基础配置和数据源映射持久化到 SQLite。
 
 默认文件：
 
@@ -165,9 +142,8 @@ HTTP 服务会把配置持久化到 SQLite。
 启动行为：
 
 1. 服务先读取 SQLite 配置库。
-2. 如果配置库为空，则使用 `application.yml` 中的样例配置初始化。
-3. 初始化后，后续修改以 SQLite 中的数据为准。
-4. 管理后台修改完成后，会刷新内存中的数据源路由。
+2. 配置库首次创建为空。
+3. 管理后台修改完成后，会刷新内存中的数据源路由。
 
 ## 6. HTTP 配置示例
 
@@ -197,33 +173,6 @@ database-mcp:
     admin-password: ""
 
     config-db-path: data/database-mcp-config.db
-
-    base-jdbc-configs:
-      pg-platform:
-        type: postgres
-        host: 127.0.0.1
-        port: 5432
-        database-name: platform
-        jdbc-params: applicationName=database-mcp-http
-
-      oracle-main:
-        type: oracle
-        host: 127.0.0.1
-        port: 1521
-        sid: ORCL
-
-    datasources:
-      order-db:
-        base-config-id: pg-platform
-        username: order_user
-        password: change-me-order-password
-        schema: order_center
-
-      report-db:
-        base-config-id: oracle-main
-        username: report_user
-        password: change-me-report-password
-        schema: REPORT_APP
 ```
 
 说明：
@@ -306,6 +255,15 @@ Base64Url(HMAC_SHA256(secret, clientId.timestamp.nonce))
 - `db_info`
 - `db_current_user`
 - `db_compare_schemas`
+
+其中三个最常用工具的语义边界如下：
+
+- `db_list_tables`
+  用于候选表发现和 schema 探索，不代表已经查到业务数据，也不应直接用于最终业务结论。
+- `db_get_ddl`
+  用于表结构、列、约束等 DDL 验证，不代表已经查到业务数据，也不应直接用于最终业务结论。
+- `db_query`
+  用于执行只读 SQL 以获取业务数据和证据。对需要业务结论、统计、趋势分析的问题，应以此工具的结果作为主要依据。
 
 同时提供一套兼容别名：
 
