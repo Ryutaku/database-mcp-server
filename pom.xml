@@ -14,8 +14,6 @@
 
     <modules>
         <module>database-mcp-core</module>
-        <module>database-mcp-stdio</module>
-        <module>database-mcp-http</module>
     </modules>
 
     <properties>
