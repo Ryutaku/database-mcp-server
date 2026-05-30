@@ -34,3 +34,10 @@ database-mcp:
     # SQLite 配置库存放路径
     # 如果库为空，启动时会先用下面的样例配置初始化
     config-db-path: data/database-mcp-config.db
+
+#日志地址
+logging:
+  file:
+    name: /home/monitor/deployments/mcp-tools/database-mcp-server/logs/mcp-server.log
+  level:
+    root: info
