@@ -29,4 +29,13 @@ class OracleDialectTest {
       String sql = dialect.buildAlterTableSql("APP", "USERS", "alter_column", java.util.Map.of("columnDef", java.util.Map.of("name", "NAME", "type", "VARCHAR2(255)")));
       assertEquals("ALTER TABLE \"USERS\" MODIFY (\"NAME\" VARCHAR2(255))", sql);
    }
+
+   @Test
+   void listTablesIncludesOracleTableComments() {
+      String sql = dialect.sqlListTables();
+
+      assertTrue(sql.contains("tc.comments AS table_comment"));
+      assertTrue(sql.contains("LEFT JOIN all_tab_comments"));
+      assertFalse(sql.contains("NULL AS table_comment"));
+   }
 }

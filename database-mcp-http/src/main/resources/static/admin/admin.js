@@ -1,357 +1,668 @@
-const adminApiBase = resolveAdminApiBase();
-const adminPasswordStorageKey = "database-mcp-admin-password";
+/* ===================================================================
+   Database MCP Admin — JavaScript
+   =================================================================== */
+(function () {
+  "use strict";
 
-const statusEl = document.getElementById("status");
-const baseConfigTableBody = document.getElementById("baseConfigTableBody");
-const datasourceTableBody = document.getElementById("datasourceTableBody");
-const baseConfigForm = document.getElementById("baseConfigForm");
-const datasourceForm = document.getElementById("datasourceForm");
-const baseConfigSearchInput = document.getElementById("baseConfigSearch");
-const datasourceSearchInput = document.getElementById("datasourceSearch");
-const baseConfigSelect = document.getElementById("baseConfigSelect");
-const datasourceSchemaHint = document.getElementById("datasourceSchemaHint");
-const navItems = document.querySelectorAll(".nav-item");
-const panels = document.querySelectorAll(".panel-view");
+  /* =========================  CONFIG  ========================= */
+  var adminApiBase = resolveAdminApiBase();
+  var STORAGE_KEY = "database-mcp-admin-password";
 
-let currentBaseConfigs = [];
-let currentDatasources = [];
+  /* =========================  DOM  ========================= */
+  var $id = function (id) { return document.getElementById(id); };
 
-document.getElementById("reloadButton").addEventListener("click", () => loadConfig("配置已刷新"));
-document.getElementById("cancelBaseEditButton").addEventListener("click", resetBaseConfigForm);
-document.getElementById("cancelDatasourceEditButton").addEventListener("click", resetDatasourceForm);
-baseConfigSearchInput.addEventListener("input", () => renderBaseConfigs(currentBaseConfigs));
-datasourceSearchInput.addEventListener("input", () => renderDatasources(currentDatasources, currentBaseConfigs));
-baseConfigSelect.addEventListener("change", updateDatasourceSchemaHint);
-navItems.forEach((item) => item.addEventListener("click", () => switchView(item.dataset.view)));
+  var statusEl       = $id("status");
+  var statusTextEl   = statusEl ? statusEl.querySelector("span") : null;
 
-baseConfigForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const form = new FormData(baseConfigForm);
-    const id = String(form.get("id")).trim();
-    await apiFetch(`/base-configs/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        type: form.get("type"),
-        host: form.get("host"),
-        port: Number(form.get("port")),
-        databaseName: form.get("databaseName"),
-        sid: form.get("sid"),
-        jdbcParams: form.get("jdbcParams")
-      })
+  var baseTableBody  = $id("baseConfigTableBody");
+  var dsTableBody    = $id("datasourceTableBody");
+
+  var baseForm       = $id("baseConfigForm");
+  var dsForm         = $id("datasourceForm");
+
+  var baseSearchInput = $id("baseConfigSearch");
+  var dsSearchInput   = $id("datasourceSearch");
+  var baseConfigSelect = $id("baseConfigSelect");
+
+  var baseDatabaseField = $id("baseDatabaseField");
+  var baseSidField      = $id("baseSidField");
+  var basePortInput     = $id("basePortInput");
+  var baseJdbcInput     = $id("baseJdbcInput");
+  var baseTypeSelect    = $id("baseTypeSelect");
+
+  var dsSchemaField     = $id("datasourceSchemaField");
+  var dsSchemaHint      = $id("datasourceSchemaHint");
+  var dsDbTypeBadge     = $id("datasourceDbTypeBadge");
+
+  var baseCountEl = $id("baseCount");
+  var dsCountEl   = $id("dsCount");
+
+  var baseModal      = $id("baseModal");
+  var baseModalTitle = $id("baseModalTitle");
+  var dsModal        = $id("dsModal");
+  var dsModalTitle   = $id("dsModalTitle");
+
+  var toastEl     = $id("toast");
+  var toastTextEl = $id("toastText");
+  var toastIcon   = toastEl ? toastEl.querySelector("i") : null;
+  var toastTimer  = null;
+
+  var confirmOverlay = $id("confirmOverlay");
+  var confirmTitleEl = $id("confirmTitle");
+  var confirmMsgEl   = $id("confirmMessage");
+  var confirmResolve = null;
+
+  /* =========================  STATE  ========================= */
+  var currentBaseConfigs = [];
+  var currentDatasources = [];
+
+  /* =========================================================
+     EVENT BINDINGS
+     ========================================================= */
+
+  /* --- Tab navigation (event delegation) --- */
+  var tabNav = $id("tabNav");
+  if (tabNav) {
+    tabNav.addEventListener("click", function (e) {
+      var btn = e.target.closest(".UnderlineNav-item");
+      if (btn && btn.dataset.view) {
+        switchView(btn.dataset.view);
+      }
     });
-    resetBaseConfigForm();
-    await loadConfig("基础 JDBC 配置已保存");
-  } catch (error) {
-    setStatus(error.message, true);
   }
-});
 
-datasourceForm.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const form = new FormData(datasourceForm);
-    const id = String(form.get("id")).trim();
-    await apiFetch(`/datasources/${encodeURIComponent(id)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        baseConfigId: form.get("baseConfigId"),
-        username: form.get("username"),
-        password: form.get("password"),
-        schema: form.get("schema")
-      })
+  /* --- Reload --- */
+  bind("reloadButton", "click", function () { loadConfig("配置已刷新"); });
+
+  /* --- Create buttons → open empty modal --- */
+  bind("createBaseBtn", "click", function () {
+    resetBaseForm();
+    baseModalTitle.textContent = "Create Base Profile";
+    baseForm.elements.id.removeAttribute("readonly");
+    openModal(baseModal);
+  });
+
+  bind("createDsBtn", "click", function () {
+    resetDsForm();
+    dsModalTitle.textContent = "Create Datasource";
+    dsForm.elements.id.removeAttribute("readonly");
+    openModal(dsModal);
+  });
+
+  /* --- Search (client-side filter) --- */
+  if (baseSearchInput) {
+    baseSearchInput.addEventListener("input", function () {
+      renderBaseConfigs(currentBaseConfigs);
     });
-    resetDatasourceForm();
-    await loadConfig("数据源映射已保存");
-  } catch (error) {
-    setStatus(error.message, true);
   }
-});
+  if (dsSearchInput) {
+    dsSearchInput.addEventListener("input", function () {
+      renderDatasources(currentDatasources, currentBaseConfigs);
+    });
+  }
 
-function ensureAdminPassword(forcePrompt = false) {
-  let password = window.localStorage.getItem(adminPasswordStorageKey);
-  if (!password || forcePrompt) {
-    const today = new Date().toISOString().slice(0, 10);
-    const input = window.prompt("请输入管理后台口令，默认是今天日期（yyyy-MM-dd）", password || today);
-    if (input && input.trim()) {
-      password = input.trim();
-      window.localStorage.setItem(adminPasswordStorageKey, password);
-      setStatus("管理口令已更新");
+  /* --- Type switch in base form --- */
+  if (baseTypeSelect) {
+    baseTypeSelect.addEventListener("change", updateBaseFormByType);
+  }
+
+  /* --- Base profile switch in datasource form --- */
+  if (baseConfigSelect) {
+    baseConfigSelect.addEventListener("change", updateDsFormByType);
+  }
+
+  /* --- Modal close: all .js-modal-close buttons --- */
+  document.addEventListener("click", function (e) {
+    /* Close button inside a data-modal overlay */
+    if (e.target.closest(".js-modal-close")) {
+      var overlay = e.target.closest("[data-modal]");
+      if (overlay) closeModal(overlay);
+      return;
     }
-  }
-  return password || "";
-}
-
-async function loadConfig(successMessage) {
-  try {
-    const snapshot = await apiFetch("/config");
-    currentBaseConfigs = snapshot.baseConfigs || [];
-    currentDatasources = snapshot.datasources || [];
-    renderBaseConfigOptions(currentBaseConfigs);
-    renderBaseConfigs(currentBaseConfigs);
-    renderDatasources(currentDatasources, currentBaseConfigs);
-    updateDatasourceSchemaHint();
-    setStatus(successMessage || `已加载 ${currentBaseConfigs.length} 个基础配置，${currentDatasources.length} 个数据源`);
-  } catch (error) {
-    setStatus(error.message, true);
-  }
-}
-
-function renderBaseConfigOptions(baseConfigs) {
-  const currentValue = datasourceForm.elements.baseConfigId.value;
-  baseConfigSelect.innerHTML = '<option value="">请选择基础配置别名</option>';
-  for (const item of baseConfigs) {
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = `${item.id} | ${normalizeType(item.type)} | ${item.host}:${item.port}`;
-    baseConfigSelect.appendChild(option);
-  }
-  if (baseConfigs.some((item) => item.id === currentValue)) {
-    datasourceForm.elements.baseConfigId.value = currentValue;
-  }
-}
-
-function renderBaseConfigs(baseConfigs) {
-  const keyword = baseConfigSearchInput.value.trim().toLowerCase();
-  baseConfigTableBody.innerHTML = "";
-  for (const item of baseConfigs.filter((config) => matchesBaseConfig(config, keyword))) {
-    const target = normalizeType(item.type) === "postgres" ? (item.databaseName || "-") : (item.sid || "-");
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(item.id)}</td>
-      <td>${escapeHtml(normalizeType(item.type))}</td>
-      <td>${escapeHtml(item.host)}</td>
-      <td>${escapeHtml(item.port)}</td>
-      <td>${escapeHtml(target)}</td>
-      <td>${escapeHtml(item.jdbcParams || "-")}</td>
-      <td>
-        <div class="row-actions">
-          <button class="button ghost" type="button" data-action="edit-base">编辑</button>
-          <button class="button danger" type="button" data-action="delete-base">删除</button>
-        </div>
-      </td>
-    `;
-
-    row.querySelector("[data-action='edit-base']").addEventListener("click", () => {
-      fillBaseConfigForm(item);
-      setStatus(`正在编辑基础配置 ${item.id}`);
-    });
-
-    row.querySelector("[data-action='delete-base']").addEventListener("click", async () => {
-      try {
-        await apiFetch(`/base-configs/${encodeURIComponent(item.id)}`, { method: "DELETE" });
-        if (String(baseConfigForm.elements.id.value).trim() === item.id) {
-          resetBaseConfigForm();
-        }
-        if (String(datasourceForm.elements.baseConfigId.value).trim() === item.id) {
-          datasourceForm.elements.baseConfigId.value = "";
-        }
-        await loadConfig("基础 JDBC 配置已删除");
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    });
-
-    baseConfigTableBody.appendChild(row);
-  }
-}
-
-function renderDatasources(datasources, baseConfigs) {
-  const keyword = datasourceSearchInput.value.trim().toLowerCase();
-  datasourceTableBody.innerHTML = "";
-  const baseMap = new Map(baseConfigs.map((item) => [item.id, item]));
-  for (const item of datasources.filter((config) => matchesDatasource(config, keyword))) {
-    const base = baseMap.get(item.baseConfigId);
-    const resolvedTarget = buildResolvedTarget(base, item);
-    const schemaMode = item.schema || "跟随连接";
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${escapeHtml(item.id)}</td>
-      <td>${escapeHtml(item.baseConfigId)}</td>
-      <td>${escapeHtml(item.username || "-")}</td>
-      <td>${escapeHtml(schemaMode)}</td>
-      <td>${escapeHtml(resolvedTarget)}</td>
-      <td>
-        <div class="row-actions">
-          <button class="button ghost" type="button" data-action="test-ds">测试</button>
-          <button class="button ghost" type="button" data-action="edit-ds">编辑</button>
-          <button class="button danger" type="button" data-action="delete-ds">删除</button>
-        </div>
-      </td>
-    `;
-
-    row.querySelector("[data-action='test-ds']").addEventListener("click", async () => {
-      try {
-        const result = await apiFetch(`/datasources/${encodeURIComponent(item.id)}/test`);
-        setStatus(result.message, !result.success);
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    });
-
-    row.querySelector("[data-action='edit-ds']").addEventListener("click", () => {
-      fillDatasourceForm(item);
-      setStatus(`正在编辑数据源 ${item.id}`);
-    });
-
-    row.querySelector("[data-action='delete-ds']").addEventListener("click", async () => {
-      try {
-        await apiFetch(`/datasources/${encodeURIComponent(item.id)}`, { method: "DELETE" });
-        if (String(datasourceForm.elements.id.value).trim() === item.id) {
-          resetDatasourceForm();
-        }
-        await loadConfig("数据源映射已删除");
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    });
-
-    datasourceTableBody.appendChild(row);
-  }
-}
-
-function matchesBaseConfig(item, keyword) {
-  if (!keyword) {
-    return true;
-  }
-  return [item.id, item.type, item.host, item.databaseName, item.sid, item.jdbcParams]
-    .some((value) => String(value || "").toLowerCase().includes(keyword));
-}
-
-function matchesDatasource(item, keyword) {
-  if (!keyword) {
-    return true;
-  }
-  return [item.id, item.baseConfigId, item.username]
-    .some((value) => String(value || "").toLowerCase().includes(keyword));
-}
-
-function fillBaseConfigForm(item) {
-  baseConfigForm.elements.id.value = item.id || "";
-  baseConfigForm.elements.type.value = normalizeType(item.type);
-  baseConfigForm.elements.host.value = item.host || "";
-  baseConfigForm.elements.port.value = item.port || "";
-  baseConfigForm.elements.databaseName.value = item.databaseName || "";
-  baseConfigForm.elements.sid.value = item.sid || "";
-  baseConfigForm.elements.jdbcParams.value = item.jdbcParams || "";
-}
-
-function fillDatasourceForm(item) {
-  datasourceForm.elements.id.value = item.id || "";
-  datasourceForm.elements.baseConfigId.value = item.baseConfigId || "";
-  datasourceForm.elements.username.value = item.username || "";
-  datasourceForm.elements.password.value = item.password || "";
-  datasourceForm.elements.schema.value = item.schema || "";
-  updateDatasourceSchemaHint();
-}
-
-function resetBaseConfigForm() {
-  baseConfigForm.reset();
-  baseConfigForm.elements.type.value = "postgres";
-}
-
-function resetDatasourceForm() {
-  datasourceForm.reset();
-  datasourceForm.elements.baseConfigId.value = "";
-  updateDatasourceSchemaHint();
-}
-
-async function apiFetch(path, options = {}) {
-  const password = ensureAdminPassword(false);
-  const response = await fetch(`${adminApiBase}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Admin-Password": password,
-      ...(options.headers || {})
+    /* Click on backdrop itself */
+    var backdrop = e.target;
+    if (backdrop.hasAttribute && backdrop.hasAttribute("data-modal")) {
+      closeModal(backdrop);
+      return;
     }
   });
 
-  if (response.status === 401) {
-    ensureAdminPassword(true);
-    throw new Error("管理口令无效，请重新输入");
+  /* --- Confirm dialog --- */
+  document.addEventListener("click", function (e) {
+    if (e.target.closest(".js-confirm-cancel")) {
+      resolveConfirm(false);
+      return;
+    }
+    if (e.target.closest(".js-confirm-ok")) {
+      resolveConfirm(true);
+      return;
+    }
+    /* Click backdrop of confirm */
+    if (e.target === confirmOverlay) {
+      resolveConfirm(false);
+    }
+  });
+
+  /* --- Base form submit --- */
+  if (baseForm) {
+    baseForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      submitBaseForm();
+    });
   }
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `请求失败: ${response.status}`);
+  /* --- Datasource form submit --- */
+  if (dsForm) {
+    dsForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      submitDsForm();
+    });
   }
 
-  if (response.status === 204) {
-    return null;
-  }
-  return response.json();
-}
+  /* =========================================================
+     FORM SUBMISSION
+     ========================================================= */
 
-function setStatus(message, isError = false) {
-  statusEl.textContent = message;
-  statusEl.style.color = isError ? "#ff7b86" : "";
-}
+  function submitBaseForm() {
+    var fd = new FormData(baseForm);
+    var id = String(fd.get("id") || "").trim();
+    if (!id) { showToast("基础配置别名不能为空", true); return; }
 
-function resolveAdminApiBase() {
-  const currentUrl = new URL(window.location.href);
-  const adminPath = currentUrl.pathname.replace(/\/[^/]*$/, "");
-  return `${adminPath}/api`;
-}
+    var type = norm(fd.get("type"));
+    var payload = {
+      type: type,
+      host: String(fd.get("host") || "").trim(),
+      port: Number(fd.get("port")),
+      databaseName: type === "postgres" ? String(fd.get("databaseName") || "").trim() : "",
+      sid: type === "oracle" ? String(fd.get("sid") || "").trim() : "",
+      jdbcParams: String(fd.get("jdbcParams") || "").trim()
+    };
 
-function switchView(view) {
-  navItems.forEach((item) => item.classList.toggle("active", item.dataset.view === view));
-  panels.forEach((panel) => panel.classList.toggle("hidden", panel.dataset.panel !== view));
-}
-
-function normalizeType(value) {
-  return String(value || "").toLowerCase();
-}
-
-function buildResolvedTarget(base, datasource) {
-  if (!base) {
-    return "基础配置不存在";
-  }
-
-  const type = normalizeType(base.type);
-  const targetName = base.databaseName || base.sid || "-";
-  const baseTarget = `${type}://${base.host}:${base.port}/${targetName}`;
-
-  if (type !== "postgres") {
-    return baseTarget;
+    apiFetch("/base-configs/" + encodeURIComponent(id), {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }).then(function () {
+      closeModal(baseModal);
+      return loadConfig("基础 JDBC 配置已保存：" + id);
+    }).catch(function (err) {
+      showToast(err.message, true);
+    });
   }
 
-  const params = new URLSearchParams(base.jdbcParams || "");
-  if (datasource?.schema) {
-    params.set("currentSchema", datasource.schema);
+  function submitDsForm() {
+    var fd = new FormData(dsForm);
+    var id = String(fd.get("id") || "").trim();
+    if (!id) { showToast("Datasource ID 不能为空", true); return; }
+
+    var baseId = String(fd.get("baseConfigId") || "").trim();
+    var selBase = currentBaseConfigs.find(function (c) { return c.id === baseId; });
+    var payload = {
+      baseConfigId: baseId,
+      username: String(fd.get("username") || "").trim(),
+      password: String(fd.get("password") || "").trim(),
+      schema: norm(selBase && selBase.type) === "oracle" ? "" : String(fd.get("schema") || "").trim()
+    };
+
+    apiFetch("/datasources/" + encodeURIComponent(id), {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    }).then(function () {
+      closeModal(dsModal);
+      return loadConfig("数据源映射已保存：" + id);
+    }).catch(function (err) {
+      showToast(err.message, true);
+    });
   }
 
-  const query = params.toString();
-  return query ? `${baseTarget}?${query}` : baseTarget;
-}
+  /* =========================================================
+     MODAL
+     ========================================================= */
 
-function updateDatasourceSchemaHint() {
-  if (!datasourceSchemaHint) {
-    return;
+  function openModal(el) {
+    if (!el) return;
+    el.classList.add("show");
+    document.body.style.overflow = "hidden";
   }
-  const base = currentBaseConfigs.find((item) => item.id === datasourceForm.elements.baseConfigId.value);
-  const type = normalizeType(base?.type);
-  if (type === "oracle") {
-    datasourceSchemaHint.textContent = "Oracle 数据源通常应留空 schema。只有明确需要 ALTER SESSION SET CURRENT_SCHEMA 时才填写。";
-    return;
-  }
-  if (type === "postgres") {
-    datasourceSchemaHint.textContent = "PostgreSQL 通常可由 JDBC URL、search_path 或连接默认 schema 决定。只有需要显式覆盖时才填写。";
-    return;
-  }
-  datasourceSchemaHint.textContent = "schema 是高级选项。默认建议留空，让连接自身决定当前 schema。";
-}
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+  function closeModal(el) {
+    if (!el) return;
+    el.classList.remove("show");
+    if (!document.querySelector(".Overlay-backdrop.show")) {
+      document.body.style.overflow = "";
+    }
+  }
 
-resetBaseConfigForm();
-resetDatasourceForm();
-switchView("base");
-loadConfig();
+  /* =========================================================
+     TOAST
+     ========================================================= */
+
+  function showToast(msg, isError) {
+    if (toastTimer) clearTimeout(toastTimer);
+    if (toastTextEl) toastTextEl.textContent = msg;
+    if (toastEl) {
+      toastEl.classList.toggle("error", !!isError);
+      if (toastIcon) toastIcon.className = isError ? "bi bi-exclamation-triangle" : "bi bi-check-circle";
+      toastEl.classList.add("show");
+      toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, isError ? 5000 : 3000);
+    }
+    setStatus(msg, isError);
+  }
+
+  function setStatus(msg, isError) {
+    if (statusEl) statusEl.classList.toggle("error", !!isError);
+    if (statusTextEl) statusTextEl.textContent = msg;
+  }
+
+  /* =========================================================
+     CONFIRM DIALOG
+     ========================================================= */
+
+  function showConfirm(title, message) {
+    if (confirmTitleEl) confirmTitleEl.textContent = title;
+    if (confirmMsgEl) confirmMsgEl.textContent = message;
+    if (confirmOverlay) {
+      confirmOverlay.classList.add("show");
+      document.body.style.overflow = "hidden";
+    }
+    return new Promise(function (resolve) {
+      confirmResolve = resolve;
+    });
+  }
+
+  function resolveConfirm(result) {
+    if (confirmOverlay) confirmOverlay.classList.remove("show");
+    if (!document.querySelector(".Overlay-backdrop.show")) {
+      document.body.style.overflow = "";
+    }
+    if (confirmResolve) {
+      var fn = confirmResolve;
+      confirmResolve = null;
+      fn(result);
+    }
+  }
+
+  /* =========================================================
+     API & AUTH
+     ========================================================= */
+
+  function ensurePassword(force) {
+    var pw = window.localStorage.getItem(STORAGE_KEY);
+    if (!pw || force) {
+      var today = new Date().toISOString().slice(0, 10);
+      var input = window.prompt("请输入管理后台口令（留空时默认可尝试当天日期，格式 yyyy-MM-dd）", pw || today);
+      if (input && input.trim()) {
+        pw = input.trim();
+        window.localStorage.setItem(STORAGE_KEY, pw);
+        showToast("管理口令已更新");
+      }
+    }
+    return pw || "";
+  }
+
+  function apiFetch(path, opts) {
+    opts = opts || {};
+    var pw = ensurePassword(false);
+    var headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+    if (pw) headers["X-Admin-Password"] = pw;
+
+    return fetch(adminApiBase + path, Object.assign({}, opts, { headers: headers }))
+      .then(function (res) {
+        if (res.status === 401) {
+          ensurePassword(true);
+          throw new Error("管理口令无效，请重新输入后重试");
+        }
+        if (!res.ok) {
+          return res.text().then(function (t) { throw new Error(t || "请求失败: " + res.status); });
+        }
+        if (res.status === 204) return null;
+        return res.json();
+      });
+  }
+
+  /* =========================================================
+     DATA LOADING
+     ========================================================= */
+
+  function loadConfig(successMsg) {
+    return apiFetch("/config").then(function (snap) {
+      currentBaseConfigs = (snap && snap.baseConfigs) || [];
+      currentDatasources = (snap && snap.datasources) || [];
+
+      renderBaseOptions(currentBaseConfigs);
+      renderBaseConfigs(currentBaseConfigs);
+      renderDatasources(currentDatasources, currentBaseConfigs);
+      updateCounters();
+
+      if (successMsg) {
+        showToast(successMsg);
+      } else {
+        setStatus("已加载 " + currentBaseConfigs.length + " 条基础配置，" + currentDatasources.length + " 条数据源映射");
+      }
+    }).catch(function (err) {
+      showToast(err.message, true);
+    });
+  }
+
+  function updateCounters() {
+    if (baseCountEl) baseCountEl.textContent = currentBaseConfigs.length;
+    if (dsCountEl) dsCountEl.textContent = currentDatasources.length;
+  }
+
+  function renderBaseOptions(list) {
+    if (!baseConfigSelect) return;
+    var cur = dsForm ? dsForm.elements.baseConfigId.value : "";
+    baseConfigSelect.innerHTML = '<option value="">请选择基础配置</option>';
+    list.forEach(function (c) {
+      var o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.id + " | " + norm(c.type) + " | " + c.host + ":" + c.port;
+      baseConfigSelect.appendChild(o);
+    });
+    if (list.some(function (c) { return c.id === cur; })) {
+      baseConfigSelect.value = cur;
+    }
+  }
+
+  /* =========================================================
+     RENDER TABLES
+     ========================================================= */
+
+  function renderBaseConfigs(list) {
+    if (!baseTableBody) return;
+    var kw = baseSearchInput ? baseSearchInput.value.trim().toLowerCase() : "";
+    baseTableBody.innerHTML = "";
+
+    var filtered = list.filter(function (c) { return matchBase(c, kw); });
+
+    if (filtered.length === 0) {
+      emptyRow(baseTableBody, 7, '暂无基础配置，点击 "Create Profile" 开始创建。');
+      return;
+    }
+
+    filtered.forEach(function (item) {
+      var type = norm(item.type);
+      var target = type === "postgres" ? (item.databaseName || "-") : (item.sid || "-");
+      var tr = document.createElement("tr");
+
+      tr.innerHTML =
+        '<td data-label="ID">' + esc(item.id) + '</td>' +
+        '<td data-label="Type"><span class="Label Label--accent">' + esc(type) + '</span></td>' +
+        '<td data-label="Host">' + esc(item.host) + '</td>' +
+        '<td data-label="Port">' + esc(item.port) + '</td>' +
+        '<td data-label="Target">' + esc(target) + '</td>' +
+        '<td data-label="JDBC Params">' + esc(item.jdbcParams || "-") + '</td>' +
+        '<td data-label="Actions">' +
+          '<div class="row-actions">' +
+            '<button class="btn btn-sm btn-icon" type="button" data-act="edit" title="编辑"><i class="bi bi-pencil"></i></button>' +
+            '<button class="btn btn-sm btn-icon icon-danger" type="button" data-act="del" title="删除"><i class="bi bi-trash3"></i></button>' +
+          '</div>' +
+        '</td>';
+
+      tr.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        fillBaseForm(item);
+        baseModalTitle.textContent = "Edit Base Profile: " + item.id;
+        baseForm.elements.id.setAttribute("readonly", "readonly");
+        openModal(baseModal);
+      });
+
+      tr.querySelector('[data-act="del"]').addEventListener("click", function () {
+        showConfirm("删除基础配置", '确认删除基础配置 "' + item.id + '"？此操作不可撤销。').then(function (ok) {
+          if (!ok) return;
+          apiFetch("/base-configs/" + encodeURIComponent(item.id), { method: "DELETE" })
+            .then(function () { return loadConfig("基础 JDBC 配置已删除：" + item.id); })
+            .catch(function (err) { showToast(err.message, true); });
+        });
+      });
+
+      baseTableBody.appendChild(tr);
+    });
+  }
+
+  function renderDatasources(dsList, baseList) {
+    if (!dsTableBody) return;
+    var kw = dsSearchInput ? dsSearchInput.value.trim().toLowerCase() : "";
+    dsTableBody.innerHTML = "";
+
+    var baseMap = {};
+    baseList.forEach(function (c) { baseMap[c.id] = c; });
+
+    var filtered = dsList.filter(function (c) { return matchDs(c, kw); });
+
+    if (filtered.length === 0) {
+      emptyRow(dsTableBody, 6, '暂无数据源映射，点击 "Create Datasource" 开始创建。');
+      return;
+    }
+
+    filtered.forEach(function (item) {
+      var base = baseMap[item.baseConfigId];
+      var resolved = buildTarget(base, item);
+      var schema = item.schema || "跟随连接";
+
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td data-label="Datasource ID">' + esc(item.id) + '</td>' +
+        '<td data-label="Base Profile"><span class="Label Label--accent">' + esc(item.baseConfigId) + '</span></td>' +
+        '<td data-label="Username">' + esc(item.username || "-") + '</td>' +
+        '<td data-label="Schema">' + esc(schema) + '</td>' +
+        '<td data-label="Resolved Target">' + esc(resolved) + '</td>' +
+        '<td data-label="Actions">' +
+          '<div class="row-actions">' +
+            '<button class="btn btn-sm btn-icon icon-success" type="button" data-act="test" title="测试连接"><i class="bi bi-plug"></i></button>' +
+            '<button class="btn btn-sm btn-icon" type="button" data-act="edit" title="编辑"><i class="bi bi-pencil"></i></button>' +
+            '<button class="btn btn-sm btn-icon icon-danger" type="button" data-act="del" title="删除"><i class="bi bi-trash3"></i></button>' +
+          '</div>' +
+        '</td>';
+
+      tr.querySelector('[data-act="test"]').addEventListener("click", function () {
+        apiFetch("/datasources/" + encodeURIComponent(item.id) + "/test")
+          .then(function (r) { showToast(r.message, !r.success); })
+          .catch(function (err) { showToast(err.message, true); });
+      });
+
+      tr.querySelector('[data-act="edit"]').addEventListener("click", function () {
+        fillDsForm(item);
+        dsModalTitle.textContent = "Edit Datasource: " + item.id;
+        dsForm.elements.id.setAttribute("readonly", "readonly");
+        openModal(dsModal);
+      });
+
+      tr.querySelector('[data-act="del"]').addEventListener("click", function () {
+        showConfirm("删除数据源", '确认删除数据源 "' + item.id + '"？此操作不可撤销。').then(function (ok) {
+          if (!ok) return;
+          apiFetch("/datasources/" + encodeURIComponent(item.id), { method: "DELETE" })
+            .then(function () { return loadConfig("数据源映射已删除：" + item.id); })
+            .catch(function (err) { showToast(err.message, true); });
+        });
+      });
+
+      dsTableBody.appendChild(tr);
+    });
+  }
+
+  /* =========================================================
+     FILTERS
+     ========================================================= */
+
+  function matchBase(c, kw) {
+    if (!kw) return true;
+    return [c.id, c.type, c.host, c.databaseName, c.sid, c.jdbcParams]
+      .some(function (v) { return String(v || "").toLowerCase().indexOf(kw) !== -1; });
+  }
+
+  function matchDs(c, kw) {
+    if (!kw) return true;
+    return [c.id, c.baseConfigId, c.username]
+      .some(function (v) { return String(v || "").toLowerCase().indexOf(kw) !== -1; });
+  }
+
+  /* =========================================================
+     FORM HELPERS
+     ========================================================= */
+
+  function fillBaseForm(item) {
+    baseForm.elements.id.value = item.id || "";
+    baseForm.elements.type.value = norm(item.type);
+    baseForm.elements.host.value = item.host || "";
+    baseForm.elements.port.value = item.port || "";
+    baseForm.elements.databaseName.value = item.databaseName || "";
+    baseForm.elements.sid.value = item.sid || "";
+    baseForm.elements.jdbcParams.value = item.jdbcParams || "";
+    updateBaseFormByType();
+  }
+
+  function fillDsForm(item) {
+    dsForm.elements.id.value = item.id || "";
+    dsForm.elements.baseConfigId.value = item.baseConfigId || "";
+    dsForm.elements.username.value = item.username || "";
+    dsForm.elements.password.value = item.password || "";
+    dsForm.elements.schema.value = item.schema || "";
+    updateDsFormByType();
+  }
+
+  function resetBaseForm() {
+    baseForm.reset();
+    baseForm.elements.type.value = "postgres";
+    updateBaseFormByType();
+  }
+
+  function resetDsForm() {
+    dsForm.reset();
+    if (baseConfigSelect) baseConfigSelect.value = "";
+    updateDsFormByType();
+  }
+
+  /**
+   * Toggle Base Config form fields based on database type.
+   *  - PostgreSQL → Database Name visible, SID hidden, port 5432
+   *  - Oracle     → SID visible, Database Name hidden, port 1521
+   */
+  function updateBaseFormByType() {
+    var type = norm(baseForm.elements.type.value);
+    var isPg = type === "postgres";
+
+    if (baseDatabaseField) baseDatabaseField.classList.toggle("hidden", !isPg);
+    if (baseSidField) baseSidField.classList.toggle("hidden", isPg);
+
+    baseForm.elements.databaseName.required = isPg;
+    baseForm.elements.sid.required = !isPg;
+
+    if (isPg) {
+      baseForm.elements.sid.value = "";
+    } else {
+      baseForm.elements.databaseName.value = "";
+    }
+
+    if (basePortInput) basePortInput.placeholder = isPg ? "5432" : "1521";
+    if (baseJdbcInput) baseJdbcInput.placeholder = isPg
+      ? "applicationName=database-mcp-http&connectTimeout=10"
+      : "oracle.net.CONNECT_TIMEOUT=10000";
+  }
+
+  /**
+   * Toggle Datasource form fields based on selected base profile type.
+   *  - Oracle     → Schema hidden
+   *  - PostgreSQL → Schema visible with hint
+   */
+  function updateDsFormByType() {
+    var hintSpan = dsSchemaHint ? dsSchemaHint.querySelector("span") : null;
+    if (!hintSpan) return;
+
+    var selId = dsForm.elements.baseConfigId.value;
+    var base = currentBaseConfigs.find(function (c) { return c.id === selId; });
+    var type = norm(base ? base.type : "");
+
+    if (!selId || !base) {
+      if (dsSchemaField) dsSchemaField.classList.remove("hidden");
+      dsForm.elements.schema.required = false;
+      hintSpan.textContent = "schema 是高级选项，默认建议留空，由连接或数据库默认策略决定。";
+      if (dsDbTypeBadge) { dsDbTypeBadge.textContent = "DB Type: —"; dsDbTypeBadge.className = "Label Label--secondary"; }
+      return;
+    }
+
+    if (dsDbTypeBadge) { dsDbTypeBadge.textContent = "DB Type: " + type; dsDbTypeBadge.className = "Label Label--accent"; }
+
+    if (type === "oracle") {
+      if (dsSchemaField) dsSchemaField.classList.add("hidden");
+      dsForm.elements.schema.value = "";
+      dsForm.elements.schema.required = false;
+      hintSpan.textContent = "Oracle 通常不需要 schema 覆盖，当前已自动隐藏该字段。";
+      return;
+    }
+
+    if (dsSchemaField) dsSchemaField.classList.remove("hidden");
+    dsForm.elements.schema.required = false;
+    hintSpan.textContent = type === "postgres"
+      ? "PostgreSQL 可按需填写 schema；留空时沿用 JDBC URL 或数据库默认策略。"
+      : "当前数据库支持 schema 覆盖，建议仅在明确需要时填写。";
+  }
+
+  /* =========================================================
+     NAVIGATION
+     ========================================================= */
+
+  function switchView(view) {
+    /* Update tabs */
+    var tabs = document.querySelectorAll(".UnderlineNav-item");
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].classList.toggle("selected", tabs[i].getAttribute("data-view") === view);
+    }
+    /* Update panels */
+    var pans = document.querySelectorAll(".panel-view");
+    for (var j = 0; j < pans.length; j++) {
+      pans[j].classList.toggle("active", pans[j].getAttribute("data-panel") === view);
+    }
+  }
+
+  /* =========================================================
+     UTILITIES
+     ========================================================= */
+
+  function resolveAdminApiBase() {
+    var cur = new URL(window.location.href);
+    var p = cur.pathname.replace(/\/[^/]*$/, "");
+    return p + "/api";
+  }
+
+  function norm(v) { return String(v || "").toLowerCase(); }
+
+  function buildTarget(base, ds) {
+    if (!base) return "基础配置不存在";
+    var type = norm(base.type);
+    var name = base.databaseName || base.sid || "-";
+    var t = type + "://" + base.host + ":" + base.port + "/" + name;
+    if (type !== "postgres") return t;
+    var params = new URLSearchParams(base.jdbcParams || "");
+    if (ds && ds.schema) params.set("currentSchema", ds.schema);
+    var q = params.toString();
+    return q ? t + "?" + q : t;
+  }
+
+  function emptyRow(tbody, cols, msg) {
+    var tr = document.createElement("tr");
+    var td = document.createElement("td");
+    td.colSpan = cols;
+    td.textContent = msg;
+    td.className = "empty-row";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+
+  function esc(v) {
+    return String(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
+  function bind(id, evt, fn) {
+    var el = $id(id);
+    if (el) el.addEventListener(evt, fn);
+  }
+
+  /* =========================================================
+     INIT
+     ========================================================= */
+
+  resetBaseForm();
+  resetDsForm();
+  switchView("base");
+  loadConfig();
+
+})();

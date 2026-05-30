@@ -1,6 +1,8 @@
 server:
   # Spring Boot HTTP 服务端口
   port: 8080
+  servlet:
+    context-path: /database-mcp-server
 
 database-mcp:
   http:
@@ -32,45 +34,3 @@ database-mcp:
     # SQLite 配置库存放路径
     # 如果库为空，启动时会先用下面的样例配置初始化
     config-db-path: data/database-mcp-config.db
-
-    # 基础 JDBC 配置
-    # Oracle 只支持 SID，不支持 serviceName
-    base-jdbc-configs:
-      pg-platform:
-        type: postgres
-        host: 127.0.0.1
-        port: 5432
-        database-name: platform
-        jdbc-params: applicationName=database-mcp-http
-
-      pg-report:
-        type: postgres
-        host: 127.0.0.1
-        port: 5432
-        database-name: report
-
-      oracle-main:
-        type: oracle
-        host: 127.0.0.1
-        port: 1521
-        sid: ORCL
-
-    # 数据源映射样例
-    datasources:
-      order-db:
-        base-config-id: pg-platform
-        username: order_user
-        password: change-me-order-password
-        schema: order_center
-
-      billing-db:
-        base-config-id: pg-platform
-        username: billing_user
-        password: change-me-billing-password
-        schema: billing_center
-
-      report-db:
-        base-config-id: oracle-main
-        username: report_user
-        password: change-me-report-password
-        schema: REPORT_APP

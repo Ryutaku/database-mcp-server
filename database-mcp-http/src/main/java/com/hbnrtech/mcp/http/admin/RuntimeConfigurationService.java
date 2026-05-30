@@ -5,22 +5,16 @@ import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.config.DatasourceConfig;
 import com.hbnrtech.mcp.execution.DatasourceContext;
 import com.hbnrtech.mcp.execution.DatasourceRegistry;
-import com.hbnrtech.mcp.http.admin.ConfigModels.BaseJdbcConfigPayload;
-import com.hbnrtech.mcp.http.admin.ConfigModels.DatasourcePayload;
-import com.hbnrtech.mcp.http.admin.ConfigModels.RuntimeSnapshot;
-import com.hbnrtech.mcp.http.admin.ConfigModels.StoredBaseJdbcConfig;
-import com.hbnrtech.mcp.http.admin.ConfigModels.StoredDatasource;
-import com.hbnrtech.mcp.http.admin.ConfigModels.TestConnectionResult;
-import java.sql.Connection;
-import java.sql.SQLException;
+import com.hbnrtech.mcp.http.admin.ConfigModels.*;
 import com.hbnrtech.mcp.http.config.DatabaseMcpHttpProperties;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 public class RuntimeConfigurationService {
@@ -31,12 +25,6 @@ public class RuntimeConfigurationService {
 
    public RuntimeConfigurationService(SqliteConfigRepository repository, DatabaseMcpHttpProperties properties) {
       this.repository = repository;
-      RuntimeSnapshot bootstrap = this.bootstrapSnapshot(properties);
-      if (this.repository.isEmpty() && (!bootstrap.baseConfigs().isEmpty() || !bootstrap.datasources().isEmpty())) {
-         this.repository.seed(bootstrap);
-         LOGGER.info("Seeded SQLite config store from application.yml");
-      }
-
       RuntimeSnapshot snapshot = this.repository.loadSnapshot();
       this.datasourceRegistry = new DatasourceRegistry(this.buildDatasourceContexts(snapshot.datasourceConfigs()));
       LOGGER.info("Loaded {} base JDBC configs and {} datasources from SQLite config store", snapshot.baseConfigs().size(), snapshot.datasources().size());
@@ -143,39 +131,6 @@ public class RuntimeConfigurationService {
       return contexts;
    }
 
-   private RuntimeSnapshot bootstrapSnapshot(DatabaseMcpHttpProperties properties) {
-      List<StoredBaseJdbcConfig> baseConfigs = new ArrayList<>();
-      for (Map.Entry<String, DatabaseMcpHttpProperties.BaseJdbcConfigProperties> entry : properties.getBaseJdbcConfigs().entrySet()) {
-         DatabaseMcpHttpProperties.BaseJdbcConfigProperties config = entry.getValue();
-         baseConfigs.add(
-            new StoredBaseJdbcConfig(
-               entry.getKey(),
-               DatabaseType.from(config.getType()),
-               config.getHost(),
-               config.getPort(),
-               blankToNull(config.getDatabaseName()),
-               blankToNull(config.getSid()),
-               blankToNull(config.getJdbcParams())
-            )
-         );
-      }
-
-      List<StoredDatasource> datasources = new ArrayList<>();
-      for (Map.Entry<String, DatabaseMcpHttpProperties.DatasourceProperties> entry : properties.getDatasources().entrySet()) {
-         DatabaseMcpHttpProperties.DatasourceProperties datasource = entry.getValue();
-         datasources.add(
-            new StoredDatasource(
-               entry.getKey(),
-               datasource.getBaseConfigId(),
-               datasource.getUsername(),
-               datasource.getPassword() == null ? "" : datasource.getPassword(),
-               blankToNull(datasource.getSchema())
-            )
-         );
-      }
-
-      return new RuntimeSnapshot(baseConfigs, datasources);
-   }
 
    private static void validateId(String value, String fieldName) {
       requireNonBlank(value, fieldName);

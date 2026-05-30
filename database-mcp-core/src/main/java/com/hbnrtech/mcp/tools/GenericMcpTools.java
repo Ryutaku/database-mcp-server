@@ -18,15 +18,21 @@ import io.modelcontextprotocol.spec.McpSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiFunction;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class GenericMcpTools {
    private static final ObjectMapper TOOL_SCHEMA_MAPPER = new ObjectMapper();
+   private static final Pattern CREATE_TABLE_PATTERN = Pattern.compile("(?is)^CREATE\\s+TABLE\\s+(.+?)\\s*\\(\\s*\\n(.*?)\\n\\)");
+   private static final Pattern COMMENT_TABLE_PATTERN = Pattern.compile("(?is)COMMENT\\s+ON\\s+TABLE\\s+(.+?)\\s+IS\\s+'((?:''|[^'])*)'");
+   private static final Pattern COMMENT_COLUMN_PATTERN = Pattern.compile("(?is)COMMENT\\s+ON\\s+COLUMN\\s+(.+?)\\.\"((?:\"\"|[^\"])*)\"\\s+IS\\s+'((?:''|[^'])*)'");
 
    private final DatasourceRegistry datasourceRegistry;
    private final JdbcExecutor executor;
@@ -42,7 +48,7 @@ public class GenericMcpTools {
 
    public List<RegisteredTool> getRegisteredTools() {
       List<RegisteredTool> tools = new ArrayList<>();
-      tools.add(new RegisteredTool(this.tool("db_query", "Execute a read-only SELECT or WITH query", """
+      tools.add(new RegisteredTool(this.tool("db_query", "执行只读 SELECT 或 WITH 查询。需要业务数据证据、统计结果或最终业务结论时，应优先使用此工具。", """
          {
            "type": "object",
            "properties": {
@@ -71,7 +77,7 @@ public class GenericMcpTools {
            "required": ["schema"]
          }
          """), this.switchSchemaHandler()));
-      tools.add(new RegisteredTool(this.tool("db_list_tables", "List tables in the current schema context", """
+      tools.add(new RegisteredTool(this.tool("db_list_tables", "列出当前 schema 上下文中的候选表。仅用于发现和定位相关表，不代表已经查到业务数据，也不能直接作为最终结论依据。如果要获取业务数据，请调用 db_query。", """
          {
            "type": "object",
            "properties": {}
@@ -123,7 +129,7 @@ public class GenericMcpTools {
            "required": ["tableName"]
          }
          """), this.dropTableHandler()));
-      tools.add(new RegisteredTool(this.tool("db_get_ddl", "Generate table DDL", """
+      tools.add(new RegisteredTool(this.tool("db_get_ddl", "生成表 DDL 以检查表结构。仅用于核对列、约束等结构信息，不代表已经查到业务数据，也不能直接作为最终结论依据。如果要获取业务数据，请调用 db_query。", """
          {
            "type": "object",
            "properties": {
@@ -281,9 +287,13 @@ public class GenericMcpTools {
    }
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> listTablesHandler() {
-      return this.withDatasource((exchange, args, context) ->
-         this.executePreparedQuery(context, this.activeSchema(exchange, args, context), context.dialect().sqlListTables(), List.of())
-      );
+      return this.withDatasource((exchange, args, context) -> {
+         try (Connection conn = context.connectionManager().getConnection(this.activeSchema(exchange, args, context))) {
+            return ToolResults.success(this.formatTableList(this.executor.query(conn, context.dialect().sqlListTables(), List.of())));
+         } catch (SQLException ex) {
+            return this.sqlError(ex);
+         }
+      });
    }
 
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> describeTableHandler() {
@@ -332,13 +342,13 @@ public class GenericMcpTools {
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> getDdlHandler() {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
-         if (!dialect.capabilities().getDdl() || dialect.type() != DatabaseType.POSTGRES) {
+         if (!dialect.capabilities().getDdl()) {
             return ToolResults.error("DDL generation is not implemented for " + dialect.type());
          }
 
          String tableName = (String) args.get("tableName");
          try (Connection conn = context.connectionManager().getConnection(this.activeSchema(exchange, args, context))) {
-            return ToolResults.success(dialect.snapshotProvider().buildTableDdl(conn, null, tableName));
+            return ToolResults.success(this.compactTableDdl(dialect.snapshotProvider().buildTableDdl(conn, null, tableName)));
          } catch (SQLException ex) {
             return ToolResults.error("Failed to generate DDL: " + ex.getMessage());
          }
@@ -572,6 +582,141 @@ public class GenericMcpTools {
          return null;
       }
       return dialect.type() == DatabaseType.ORACLE ? value.toUpperCase() : value;
+   }
+
+   private String formatTableList(List<Map<String, Object>> rows) {
+      StringBuilder result = new StringBuilder("table\tcols\tcomment");
+      for (Map<String, Object> row : rows) {
+         result.append("\n")
+            .append(this.compactValue(this.firstValue(row, "table_name", "TABLE_NAME")))
+            .append("\t")
+            .append(this.compactValue(this.firstValue(row, "column_count", "COLUMN_COUNT")))
+            .append("\t")
+            .append(this.compactValue(this.firstValue(row, "table_comment", "TABLE_COMMENT")));
+      }
+      return result.toString();
+   }
+
+   private String compactTableDdl(String ddl) {
+      Matcher create = CREATE_TABLE_PATTERN.matcher(ddl);
+      if (!create.find()) {
+         return ddl;
+      }
+
+      String tableName = this.compactIdentifierPath(create.group(1));
+      String tableComment = "";
+      Matcher tableCommentMatcher = COMMENT_TABLE_PATTERN.matcher(ddl);
+      if (tableCommentMatcher.find()) {
+         tableComment = this.unquoteSqlLiteral(tableCommentMatcher.group(2));
+      }
+
+      Map<String, String> columnComments = new LinkedHashMap<>();
+      Matcher columnCommentMatcher = COMMENT_COLUMN_PATTERN.matcher(ddl);
+      while (columnCommentMatcher.find()) {
+         columnComments.put(this.unquoteIdentifier(columnCommentMatcher.group(2)), this.unquoteSqlLiteral(columnCommentMatcher.group(3)));
+      }
+
+      StringBuilder result = new StringBuilder();
+      result.append("table\t").append(tableName);
+      if (!tableComment.isBlank()) {
+         result.append("\t").append(this.compactValue(tableComment));
+      }
+      result.append("\ncols\nname\ttype\tnull\tdefault\tcomment");
+
+      for (String rawColumn : create.group(2).split("\\R")) {
+         String column = rawColumn.trim();
+         if (column.isBlank()) {
+            continue;
+         }
+         if (column.endsWith(",")) {
+            column = column.substring(0, column.length() - 1).trim();
+         }
+         ParsedColumn parsed = this.parseColumnDefinition(column);
+         result.append("\n")
+            .append(parsed.name())
+            .append("\t")
+            .append(parsed.type())
+            .append("\t")
+            .append(parsed.nullable() ? "" : "NN")
+            .append("\t")
+            .append(parsed.defaultValue())
+            .append("\t")
+            .append(this.compactValue(columnComments.get(parsed.name())));
+      }
+      return result.toString();
+   }
+
+   private ParsedColumn parseColumnDefinition(String column) {
+      if (!column.startsWith("\"")) {
+         return new ParsedColumn(column, "", true, "");
+      }
+      int end = this.findClosingQuote(column, 1);
+      if (end < 0) {
+         return new ParsedColumn(column, "", true, "");
+      }
+
+      String name = this.unquoteIdentifier(column.substring(1, end));
+      String definition = column.substring(end + 1).trim();
+      boolean nullable = !Pattern.compile("(?i)\\sNOT\\s+NULL(?:\\s|$)").matcher(" " + definition).find();
+      String defaultValue = "";
+      Matcher defaultMatcher = Pattern.compile("(?is)\\sDEFAULT\\s+(.+?)(?:\\s+NOT\\s+NULL\\s*$|\\s*$)").matcher(" " + definition);
+      if (defaultMatcher.find()) {
+         defaultValue = this.compactValue(defaultMatcher.group(1));
+      }
+      String type = definition
+         .replaceFirst("(?is)\\s+DEFAULT\\s+.+?(?=\\s+NOT\\s+NULL\\s*$|\\s*$)", "")
+         .replaceFirst("(?i)\\s+NOT\\s+NULL\\s*$", "")
+         .trim();
+      return new ParsedColumn(name, this.compactValue(type), nullable, defaultValue);
+   }
+
+   private int findClosingQuote(String value, int start) {
+      for (int i = start; i < value.length(); i++) {
+         if (value.charAt(i) == '"') {
+            if (i + 1 < value.length() && value.charAt(i + 1) == '"') {
+               i++;
+            } else {
+               return i;
+            }
+         }
+      }
+      return -1;
+   }
+
+   private Object firstValue(Map<String, Object> row, String... names) {
+      for (String name : names) {
+         if (row.containsKey(name)) {
+            return row.get(name);
+         }
+      }
+      return null;
+   }
+
+   private String compactIdentifierPath(String value) {
+      StringBuilder result = new StringBuilder();
+      Matcher matcher = Pattern.compile("\"((?:\"\"|[^\"])*)\"").matcher(value);
+      while (matcher.find()) {
+         if (!result.isEmpty()) {
+            result.append(".");
+         }
+         result.append(this.unquoteIdentifier(matcher.group(1)));
+      }
+      return result.isEmpty() ? this.compactValue(value) : result.toString();
+   }
+
+   private String unquoteIdentifier(String value) {
+      return value.replace("\"\"", "\"");
+   }
+
+   private String unquoteSqlLiteral(String value) {
+      return value.replace("''", "'");
+   }
+
+   private String compactValue(Object value) {
+      return value == null ? "" : value.toString().replaceAll("\\s+", " ").trim();
+   }
+
+   private record ParsedColumn(String name, String type, boolean nullable, String defaultValue) {
    }
 
    private String formatCompareReport(SchemaDiffResult result) {

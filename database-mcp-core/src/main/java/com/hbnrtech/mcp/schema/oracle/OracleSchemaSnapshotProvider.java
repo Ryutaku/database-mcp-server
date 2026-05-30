@@ -55,7 +55,37 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
       sb.append(String.join(",\n", columnDefs));
       sb.append("\n)");
+      this.appendCommentStatements(connection, owner, tableName, sb);
       return sb.toString();
+   }
+
+   private void appendCommentStatements(Connection connection, String owner, String tableName, StringBuilder sb) throws SQLException {
+      String tableComment = this.getTableComment(connection, owner, tableName);
+      Map<String, String> columnComments = this.getColumnComments(connection, owner, tableName);
+      if ((tableComment == null || tableComment.isBlank()) && columnComments.isEmpty()) {
+         return;
+      }
+
+      sb.append(";");
+      if (tableComment != null && !tableComment.isBlank()) {
+         sb.append("\n\nCOMMENT ON TABLE ")
+            .append(this.qualifiedTableName(owner, tableName))
+            .append(" IS ")
+            .append(this.quoteLiteral(tableComment))
+            .append(";");
+      }
+      for (Map.Entry<String, String> entry : columnComments.entrySet()) {
+         String comment = entry.getValue();
+         if (comment != null && !comment.isBlank()) {
+            sb.append("\nCOMMENT ON COLUMN ")
+               .append(this.qualifiedTableName(owner, tableName))
+               .append(".")
+               .append(this.quoteIdentifier(entry.getKey()))
+               .append(" IS ")
+               .append(this.quoteLiteral(comment))
+               .append(";");
+         }
+      }
    }
 
    private Map<String, TableDef> getTables(Connection connection, String owner) throws SQLException {
@@ -98,6 +128,35 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
          }
       }
       return columns;
+   }
+
+   private String getTableComment(Connection connection, String owner, String tableName) throws SQLException {
+      String sql = "SELECT comments FROM all_tab_comments WHERE owner = ? AND table_name = ? AND table_type = 'TABLE'";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, owner);
+         stmt.setString(2, tableName);
+         try (ResultSet rs = stmt.executeQuery()) {
+            return rs.next() ? rs.getString("comments") : null;
+         }
+      }
+   }
+
+   private Map<String, String> getColumnComments(Connection connection, String owner, String tableName) throws SQLException {
+      Map<String, String> comments = new LinkedHashMap<>();
+      String sql = "SELECT column_name, comments FROM all_col_comments WHERE owner = ? AND table_name = ? ORDER BY column_name";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, owner);
+         stmt.setString(2, tableName);
+         try (ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+               String comment = rs.getString("comments");
+               if (comment != null && !comment.isBlank()) {
+                  comments.put(rs.getString("column_name"), comment);
+               }
+            }
+         }
+      }
+      return comments;
    }
 
    private Map<String, IndexDef> getIndexes(Connection connection, String owner) throws SQLException {
@@ -247,5 +306,13 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
    private String quoteIdentifier(String identifier) {
       return "\"" + identifier.replace("\"", "\"\"") + "\"";
+   }
+
+   private String qualifiedTableName(String owner, String tableName) {
+      return this.quoteIdentifier(owner) + "." + this.quoteIdentifier(tableName);
+   }
+
+   private String quoteLiteral(String value) {
+      return "'" + value.replace("'", "''") + "'";
    }
 }

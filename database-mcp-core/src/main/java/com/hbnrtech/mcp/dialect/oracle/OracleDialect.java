@@ -65,11 +65,12 @@ public class OracleDialect implements DatabaseDialect {
 
    @Override
    public String sqlListTables() {
-      return "SELECT table_name, NULL AS table_comment,\n"
+      return "SELECT t.table_name, tc.comments AS table_comment,\n"
          + "       (SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner = t.owner AND c.table_name = t.table_name) AS column_count\n"
          + "FROM all_tables t\n"
-         + "WHERE owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')\n"
-         + "ORDER BY table_name";
+         + "LEFT JOIN all_tab_comments tc ON tc.owner = t.owner AND tc.table_name = t.table_name AND tc.table_type = 'TABLE'\n"
+         + "WHERE t.owner = SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')\n"
+         + "ORDER BY t.table_name";
    }
 
    @Override

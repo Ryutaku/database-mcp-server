@@ -55,7 +55,37 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
       sb.append(String.join(",\n", colDefs));
       sb.append("\n)");
+      this.appendCommentStatements(connection, resolvedSchema, tableName, sb);
       return sb.toString();
+   }
+
+   private void appendCommentStatements(Connection connection, String schema, String tableName, StringBuilder sb) throws SQLException {
+      String tableComment = this.getTableComment(connection, schema, tableName);
+      Map<String, String> columnComments = this.getColumnComments(connection, schema, tableName);
+      if ((tableComment == null || tableComment.isBlank()) && columnComments.isEmpty()) {
+         return;
+      }
+
+      sb.append(";");
+      if (tableComment != null && !tableComment.isBlank()) {
+         sb.append("\n\nCOMMENT ON TABLE ")
+            .append(this.qualifiedTableName(schema, tableName))
+            .append(" IS ")
+            .append(this.quoteLiteral(tableComment))
+            .append(";");
+      }
+      for (Map.Entry<String, String> entry : columnComments.entrySet()) {
+         String comment = entry.getValue();
+         if (comment != null && !comment.isBlank()) {
+            sb.append("\nCOMMENT ON COLUMN ")
+               .append(this.qualifiedTableName(schema, tableName))
+               .append(".")
+               .append(this.quoteIdentifier(entry.getKey()))
+               .append(" IS ")
+               .append(this.quoteLiteral(comment))
+               .append(";");
+         }
+      }
    }
 
    private Map<String, TableDef> getTables(Connection connection, String schema) throws SQLException {
@@ -97,6 +127,42 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
          }
       }
       return columns;
+   }
+
+   private String getTableComment(Connection connection, String schema, String tableName) throws SQLException {
+      String sql = "SELECT obj_description(c.oid, 'pg_class') AS table_comment "
+         + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+         + "WHERE n.nspname = ? AND c.relname = ? AND c.relkind IN ('r', 'p')";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, schema);
+         stmt.setString(2, tableName);
+         try (ResultSet rs = stmt.executeQuery()) {
+            return rs.next() ? rs.getString("table_comment") : null;
+         }
+      }
+   }
+
+   private Map<String, String> getColumnComments(Connection connection, String schema, String tableName) throws SQLException {
+      Map<String, String> comments = new LinkedHashMap<>();
+      String sql = "SELECT a.attname, col_description(c.oid, a.attnum) AS column_comment "
+         + "FROM pg_attribute a "
+         + "JOIN pg_class c ON c.oid = a.attrelid "
+         + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+         + "WHERE n.nspname = ? AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped "
+         + "ORDER BY a.attnum";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, schema);
+         stmt.setString(2, tableName);
+         try (ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+               String comment = rs.getString("column_comment");
+               if (comment != null && !comment.isBlank()) {
+                  comments.put(rs.getString("attname"), comment);
+               }
+            }
+         }
+      }
+      return comments;
    }
 
    private Map<String, IndexDef> getIndexes(Connection connection, String schema) throws SQLException {
@@ -210,6 +276,14 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
    private String quoteIdentifier(String identifier) {
       return "\"" + identifier.replace("\"", "\"\"") + "\"";
+   }
+
+   private String qualifiedTableName(String schema, String tableName) {
+      return this.quoteIdentifier(schema) + "." + this.quoteIdentifier(tableName);
+   }
+
+   private String quoteLiteral(String value) {
+      return "'" + value.replace("'", "''") + "'";
    }
 
    private String resolveSchema(Connection connection, String schema) throws SQLException {
