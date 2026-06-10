@@ -56,7 +56,7 @@ public interface DatabaseDialect {
 
    String buildCreateIndexSql(String schema, String tableName, String indexName, List<String> columns, boolean unique, boolean ifNotExists);
 
-   String buildDropIndexSql(String schema, String indexName, boolean ifExists);
+   String buildDropIndexSql(String schema, String tableName, String indexName, boolean ifExists);
 
    SchemaSnapshotProvider snapshotProvider();
 

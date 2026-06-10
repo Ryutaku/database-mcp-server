@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.hbnrtech.mcp.http.admin.ConfigModels.StoredBaseJdbcConfig;
 import java.time.Duration;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -43,5 +44,13 @@ class HttpServerConfigTest {
    @Test
    void rejectsInvalidPort() {
       assertThrows(IllegalArgumentException.class, () -> HttpServerConfig.from(Map.of("MCP_HTTP_PORT", "70000")));
+   }
+
+   @Test
+   void buildsMySqlJdbcUrlForAdminConfig() {
+      StoredBaseJdbcConfig config = new StoredBaseJdbcConfig("mysql-app", DatabaseType.MYSQL, "127.0.0.1", 3306, null, null, "useSSL=false");
+
+      assertEquals("jdbc:mysql://127.0.0.1:3306?useSSL=false", config.jdbcUrl());
+      assertEquals("jdbc:mysql://127.0.0.1:3306?useSSL=false", config.jdbcUrl("tenant_a"));
    }
 }

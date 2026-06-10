@@ -4,6 +4,7 @@
 
 - PostgreSQL
 - Oracle
+- MySQL
 
 这个仓库已经拆分为多模块结构，既可以通过 `stdio` 方式接入本地 MCP 客户端，也可以通过 `HTTP` 方式提供可管理的服务端。
 
@@ -19,7 +20,7 @@
 ## 2. 主要能力
 
 - 按 `datasourceId` 路由到不同数据库连接
-- 支持 PostgreSQL / Oracle 方言差异
+- 支持 PostgreSQL / Oracle / MySQL 方言差异
 - 提供常见数据库操作工具：
   - 查询
   - DDL / DML 执行
@@ -79,7 +80,7 @@ java -jar .\database-mcp-stdio\target\database-mcp-stdio-1.0.0.jar
 支持的环境变量：
 
 - `DB_TYPE`
-  数据库类型，支持 `postgres` / `oracle`
+  数据库类型，支持 `postgres` / `oracle` / `mysql`
 - `DB_URL`
   JDBC 地址
 - `DB_USER`
@@ -102,6 +103,7 @@ java -jar .\database-mcp-stdio\target\database-mcp-stdio-1.0.0.jar
 - `stdio` 模式会把这个单一配置映射成默认数据源，`datasourceId` 固定可理解为 `default`
 - PostgreSQL 未显式配置 schema 时默认使用 `public`
 - Oracle 未显式配置 schema 时不强制默认值
+- MySQL 基础连接不强制绑定数据库名；显式配置 schema 时会执行 `USE schema`
 
 ### 4.2 HTTP 模式
 
@@ -178,6 +180,7 @@ database-mcp:
 说明：
 
 - Oracle 当前按 `SID` 组装连接，不支持 `serviceName`
+- MySQL 当前按 `jdbc:mysql://host:port` 组装基础连接，`jdbcParams` 会追加为查询参数；默认数据库配置在具体 datasource 的 schema/default database 字段
 - `admin-password` 留空时，默认管理口令为服务端当天日期，格式为 `yyyy-MM-dd`
 - `api-key-enabled=false` 时，MCP 接口不校验 API Key
 
@@ -311,10 +314,10 @@ Base64Url(HMAC_SHA256(secret, clientId.timestamp.nonce))
 
 当前实现里：
 
-- `db_get_ddl` 仅对 PostgreSQL 实现
+- `db_get_ddl` 支持 PostgreSQL / Oracle / MySQL
 - `db_compare_schemas` 仅对 PostgreSQL 实现
 - 部分索引分析能力依赖具体方言支持
-- Oracle 和 PostgreSQL 在 schema、标识符大小写、元数据查询 SQL 上存在差异
+- Oracle、PostgreSQL 和 MySQL 在 schema、标识符大小写、元数据查询 SQL 上存在差异
 
 如果某个方言暂不支持某项能力，工具会返回明确错误信息，而不是静默降级。
 

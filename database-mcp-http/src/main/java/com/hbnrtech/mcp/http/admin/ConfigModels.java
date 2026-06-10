@@ -28,10 +28,15 @@ public final class ConfigModels {
       public String jdbcUrl(String schema) {
          return switch (this.type) {
             case POSTGRES -> {
-               String suffix = buildPostgresSuffix(this.jdbcParams, schema);
+               String suffix = buildJdbcSuffix(this.jdbcParams, "currentSchema", schema);
                yield "jdbc:postgresql://" + this.host + ":" + this.port + "/" + this.databaseName + suffix;
             }
             case ORACLE -> "jdbc:oracle:thin:@" + this.host + ":" + this.port + ":" + this.sid;
+            case MYSQL -> {
+               String suffix = buildJdbcSuffix(this.jdbcParams, null, null);
+               String databasePath = this.databaseName == null || this.databaseName.isBlank() ? "" : "/" + this.databaseName;
+               yield "jdbc:mysql://" + this.host + ":" + this.port + databasePath + suffix;
+            }
          };
       }
    }
@@ -101,7 +106,7 @@ public final class ConfigModels {
    ) {
    }
 
-   private static String buildPostgresSuffix(String jdbcParams, String schema) {
+   private static String buildJdbcSuffix(String jdbcParams, String schemaParamName, String schema) {
       Map<String, String> params = new LinkedHashMap<>();
       String normalizedParams = jdbcParams == null ? "" : jdbcParams.trim();
       if (!normalizedParams.isBlank()) {
@@ -118,8 +123,8 @@ public final class ConfigModels {
          }
       }
 
-      if (schema != null && !schema.isBlank()) {
-         params.put("currentSchema", URLEncoder.encode(schema, StandardCharsets.UTF_8));
+      if (schemaParamName != null && schema != null && !schema.isBlank()) {
+         params.put(schemaParamName, URLEncoder.encode(schema, StandardCharsets.UTF_8));
       }
 
       if (params.isEmpty()) {

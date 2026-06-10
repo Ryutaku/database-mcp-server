@@ -31,6 +31,8 @@
   var baseTypeSelect    = $id("baseTypeSelect");
 
   var dsSchemaField     = $id("datasourceSchemaField");
+  var dsSchemaLabel     = $id("datasourceSchemaLabel");
+  var dsSchemaInput     = $id("datasourceSchemaInput");
   var dsSchemaHint      = $id("datasourceSchemaHint");
   var dsDbTypeBadge     = $id("datasourceDbTypeBadge");
 
@@ -439,7 +441,7 @@
 
     filtered.forEach(function (item) {
       var type = norm(item.type);
-      var target = type === "postgres" ? (item.databaseName || "-") : (item.sid || "-");
+      var target = type === "oracle" ? (item.sid || "-") : (item.databaseName || "-");
       var tr = document.createElement("tr");
 
       tr.innerHTML =
@@ -591,29 +593,34 @@
 
   /**
    * Toggle Base Config form fields based on database type.
-   *  - PostgreSQL → Database Name visible, SID hidden, port 5432
-   *  - Oracle     → SID visible, Database Name hidden, port 1521
+   *  - PostgreSQL → Database Name visible, SID hidden
+   *  - Oracle     → SID visible, Database Name hidden
+   *  - MySQL      → both hidden; database is selected per datasource schema or USE
    */
   function updateBaseFormByType() {
     var type = norm(baseForm.elements.type.value);
     var isPg = type === "postgres";
+    var isMysql = type === "mysql";
+    var usesDatabaseName = isPg;
+    var usesSid = type === "oracle";
 
-    if (baseDatabaseField) baseDatabaseField.classList.toggle("hidden", !isPg);
-    if (baseSidField) baseSidField.classList.toggle("hidden", isPg);
+    if (baseDatabaseField) baseDatabaseField.classList.toggle("hidden", !usesDatabaseName);
+    if (baseSidField) baseSidField.classList.toggle("hidden", !usesSid);
 
-    baseForm.elements.databaseName.required = isPg;
-    baseForm.elements.sid.required = !isPg;
+    baseForm.elements.databaseName.required = usesDatabaseName;
+    baseForm.elements.sid.required = usesSid;
 
-    if (isPg) {
+    if (!usesSid) {
       baseForm.elements.sid.value = "";
-    } else {
+    }
+    if (!usesDatabaseName) {
       baseForm.elements.databaseName.value = "";
     }
 
-    if (basePortInput) basePortInput.placeholder = isPg ? "5432" : "1521";
+    if (basePortInput) basePortInput.placeholder = isPg ? "5432" : (isMysql ? "3306" : "1521");
     if (baseJdbcInput) baseJdbcInput.placeholder = isPg
       ? "applicationName=database-mcp-http&connectTimeout=10"
-      : "oracle.net.CONNECT_TIMEOUT=10000";
+      : (isMysql ? "useSSL=false&connectTimeout=10000" : "oracle.net.CONNECT_TIMEOUT=10000");
   }
 
   /**
@@ -631,6 +638,8 @@
 
     if (!selId || !base) {
       if (dsSchemaField) dsSchemaField.classList.remove("hidden");
+      if (dsSchemaLabel) dsSchemaLabel.textContent = "Schema (Optional)";
+      if (dsSchemaInput) dsSchemaInput.placeholder = "Only fill when override is required";
       dsForm.elements.schema.required = false;
       hintSpan.textContent = "schema 是高级选项，默认建议留空，由连接或数据库默认策略决定。";
       if (dsDbTypeBadge) { dsDbTypeBadge.textContent = "DB Type: —"; dsDbTypeBadge.className = "Label Label--secondary"; }
@@ -641,6 +650,8 @@
 
     if (type === "oracle") {
       if (dsSchemaField) dsSchemaField.classList.add("hidden");
+      if (dsSchemaLabel) dsSchemaLabel.textContent = "Schema (Optional)";
+      if (dsSchemaInput) dsSchemaInput.placeholder = "Only fill when override is required";
       dsForm.elements.schema.value = "";
       dsForm.elements.schema.required = false;
       hintSpan.textContent = "Oracle 通常不需要 schema 覆盖，当前已自动隐藏该字段。";
@@ -649,6 +660,15 @@
 
     if (dsSchemaField) dsSchemaField.classList.remove("hidden");
     dsForm.elements.schema.required = false;
+    if (type === "mysql") {
+      if (dsSchemaLabel) dsSchemaLabel.textContent = "Default Database (Optional)";
+      if (dsSchemaInput) dsSchemaInput.placeholder = "e.g. order_db";
+      hintSpan.textContent = "MySQL 在这里填写该 datasource 用户默认进入的库；留空时连接不选择数据库，可后续用 db_switch_schema 切换。";
+      return;
+    }
+
+    if (dsSchemaLabel) dsSchemaLabel.textContent = "Schema (Optional)";
+    if (dsSchemaInput) dsSchemaInput.placeholder = "Only fill when override is required";
     hintSpan.textContent = type === "postgres"
       ? "PostgreSQL 可按需填写 schema；留空时沿用 JDBC URL 或数据库默认策略。"
       : "当前数据库支持 schema 覆盖，建议仅在明确需要时填写。";
@@ -681,16 +701,17 @@
     return p + "/api";
   }
 
-  function norm(v) { return String(v || "").toLowerCase(); }
+  function norm(v) { return String(v || "").trim().toLowerCase(); }
 
   function buildTarget(base, ds) {
     if (!base) return "基础配置不存在";
     var type = norm(base.type);
     var name = base.databaseName || base.sid || "-";
-    var t = type + "://" + base.host + ":" + base.port + "/" + name;
-    if (type !== "postgres") return t;
+    if (type === "mysql" && ds && ds.schema) name = ds.schema;
+    var t = type + "://" + base.host + ":" + base.port + (name === "-" && type === "mysql" ? "" : "/" + name);
+    if (type !== "postgres" && type !== "mysql") return t;
     var params = new URLSearchParams(base.jdbcParams || "");
-    if (ds && ds.schema) params.set("currentSchema", ds.schema);
+    if (type === "postgres" && ds && ds.schema) params.set("currentSchema", ds.schema);
     var q = params.toString();
     return q ? t + "?" + q : t;
   }

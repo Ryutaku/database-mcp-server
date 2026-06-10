@@ -2,7 +2,8 @@ package com.hbnrtech.mcp.config;
 
 public enum DatabaseType {
    POSTGRES,
-   ORACLE;
+   ORACLE,
+   MYSQL;
 
    public static DatabaseType from(String value) {
       if (value == null || value.isBlank()) {
@@ -12,6 +13,7 @@ public enum DatabaseType {
       return switch (value.trim().toLowerCase()) {
          case "postgres", "postgresql" -> POSTGRES;
          case "oracle" -> ORACLE;
+         case "mysql" -> MYSQL;
          default -> throw new IllegalArgumentException("Unsupported DB_TYPE: " + value);
       };
    }

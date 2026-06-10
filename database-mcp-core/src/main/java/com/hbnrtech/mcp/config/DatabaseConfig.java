@@ -16,11 +16,19 @@ public record DatabaseConfig(DatabaseType type, String url, String username, Str
       String dbSchema = firstNonBlank(env.get("DB_SCHEMA"), env.get("PG_SCHEMA"));
 
       DatabaseType type = DatabaseType.from(dbType);
-      String defaultUrl = type == DatabaseType.ORACLE ? "jdbc:oracle:thin:@localhost:1521/FREEPDB1" : "jdbc:postgresql://localhost:5432/postgres";
-      String defaultUser = type == DatabaseType.ORACLE ? "system" : "postgres";
+      String defaultUrl = switch (type) {
+         case ORACLE -> "jdbc:oracle:thin:@localhost:1521/FREEPDB1";
+         case MYSQL -> "jdbc:mysql://localhost:3306";
+         case POSTGRES -> "jdbc:postgresql://localhost:5432/postgres";
+      };
+      String defaultUser = switch (type) {
+         case ORACLE -> "system";
+         case MYSQL -> "root";
+         case POSTGRES -> "postgres";
+      };
       String normalizedPassword = dbPassword == null ? "" : dbPassword;
-      // PostgreSQL defaults to public; Oracle requires an explicit schema if needed.
-      String normalizedSchema = dbSchema != null && !dbSchema.isBlank() ? dbSchema : type == DatabaseType.ORACLE ? null : "public";
+      // PostgreSQL defaults to public; Oracle and MySQL use the connected user's/database's default unless configured.
+      String normalizedSchema = dbSchema != null && !dbSchema.isBlank() ? dbSchema : type == DatabaseType.POSTGRES ? "public" : null;
       return new DatabaseConfig(type, firstNonBlank(dbUrl, defaultUrl), firstNonBlank(dbUser, defaultUser), normalizedPassword, normalizedSchema);
    }
 

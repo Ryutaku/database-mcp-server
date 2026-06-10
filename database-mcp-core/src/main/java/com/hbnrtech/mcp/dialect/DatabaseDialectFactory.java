@@ -3,6 +3,7 @@ package com.hbnrtech.mcp.dialect;
 import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.dialect.oracle.OracleDialect;
 import com.hbnrtech.mcp.dialect.postgres.PostgresDialect;
+import com.hbnrtech.mcp.dialect.mysql.MySqlDialect;
 
 public final class DatabaseDialectFactory {
    private DatabaseDialectFactory() {
@@ -12,6 +13,7 @@ public final class DatabaseDialectFactory {
       return switch (type) {
          case POSTGRES -> new PostgresDialect();
          case ORACLE -> new OracleDialect();
+         case MYSQL -> new MySqlDialect();
       };
    }
 }

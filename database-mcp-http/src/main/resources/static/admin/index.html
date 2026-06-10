@@ -6,7 +6,7 @@
   <title>Admin Console · Database MCP</title>
   <meta name="description" content="Manage base JDBC profiles and datasource mappings for Database MCP Server.">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
-  <link rel="stylesheet" href="admin.css">
+  <link rel="stylesheet" href="admin.css?v=20260610-font-mysql-database">
 </head>
 <body>
   <div class="app-shell">
@@ -150,6 +150,7 @@
               <select class="form-control" name="type" id="baseTypeSelect" required>
                 <option value="postgres">PostgreSQL</option>
                 <option value="oracle">Oracle</option>
+                <option value="mysql">MySQL</option>
               </select>
             </label>
             <label class="form-group span-8">
@@ -220,8 +221,8 @@
                 placeholder="Leave empty to keep current value">
             </label>
             <label class="form-group span-12" id="datasourceSchemaField">
-              <span class="form-label">Schema (Optional)</span>
-              <input class="form-control" name="schema" placeholder="Only fill when override is required">
+              <span class="form-label" id="datasourceSchemaLabel">Schema (Optional)</span>
+              <input class="form-control" name="schema" id="datasourceSchemaInput" placeholder="Only fill when override is required">
             </label>
           </div>
           <div class="form-hint" id="datasourceSchemaHint">
@@ -264,6 +265,6 @@
     <span id="toastText"></span>
   </div>
 
-  <script src="admin.js"></script>
+  <script src="admin.js?v=20260610-mysql-database"></script>
 </body>
 </html>

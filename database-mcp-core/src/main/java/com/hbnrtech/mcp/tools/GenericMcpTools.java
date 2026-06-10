@@ -162,10 +162,11 @@ public class GenericMcpTools {
       tools.add(new RegisteredTool(this.tool("db_drop_index", "Drop an index", """
          {
            "type": "object",
-           "properties": {
-             "indexName": {"type": "string"},
-             "ifExists": {"type": "boolean", "default": true}
-           },
+              "properties": {
+               "indexName": {"type": "string"},
+              "tableName": {"type": "string", "description": "Required by MySQL; ignored by PostgreSQL and Oracle"},
+               "ifExists": {"type": "boolean", "default": true}
+             },
            "required": ["indexName"]
          }
          """), this.dropIndexHandler()));
@@ -391,11 +392,12 @@ public class GenericMcpTools {
          DatabaseDialect dialect = context.dialect();
          String activeSchema = this.activeSchema(exchange, args, context);
          String indexName = (String) args.get("indexName");
+         String tableName = (String) args.get("tableName");
          boolean ifExists = (Boolean) args.getOrDefault("ifExists", true);
          if (ifExists && !this.objectExists(context, activeSchema, dialect.sqlIndexExists(), List.of(this.normalizeIdentifierValue(dialect, indexName)))) {
             return ToolResults.success("Index '" + indexName + "' does not exist");
          }
-         return this.executeDdl(context, activeSchema, dialect.buildDropIndexSql(null, indexName, ifExists), "Index '" + indexName + "' dropped successfully");
+         return this.executeDdl(context, activeSchema, dialect.buildDropIndexSql(null, tableName, indexName, ifExists), "Index '" + indexName + "' dropped successfully");
       });
    }
 

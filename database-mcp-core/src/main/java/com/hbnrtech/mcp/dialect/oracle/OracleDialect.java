@@ -237,7 +237,7 @@ public class OracleDialect implements DatabaseDialect {
    }
 
    @Override
-   public String buildDropIndexSql(String schema, String indexName, boolean ifExists) {
+   public String buildDropIndexSql(String schema, String tableName, String indexName, boolean ifExists) {
       return "DROP INDEX " + this.quoteIdentifier(indexName);
    }
 
