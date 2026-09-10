@@ -25,10 +25,14 @@ database-mcp:
     api-key-ttl-seconds: 300
     api-key-allowed-clock-skew-seconds: 30
 
-    # 管理后台 API 地址与口令
-    # admin-password 留空时，默认口令就是服务器当天日期，格式 yyyy-MM-dd
+    # 管理后台 API 地址与登录凭据
+    # admin-username 为登录用户名，默认 admin
+    # admin-password 为初始密码；留空时初始密码就是服务器当天日期，格式 yyyy-MM-dd
+    # 首次启动会把初始凭据写入 SQLite，之后请在管理后台“修改密码”中维护
     admin-api-base-path: /admin/api
+    admin-username-header: X-Admin-User
     admin-password-header: X-Admin-Password
+    admin-username: admin
     admin-password: ""
 
     # SQLite 配置库存放路径

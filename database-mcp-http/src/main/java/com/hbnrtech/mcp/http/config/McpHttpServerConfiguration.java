@@ -3,6 +3,7 @@ package com.hbnrtech.mcp.http.config;
 import com.hbnrtech.mcp.bootstrap.DatabaseMcpRuntime;
 import com.hbnrtech.mcp.bootstrap.DatabaseMcpRuntimeFactory;
 import com.hbnrtech.mcp.execution.JdbcExecutor;
+import com.hbnrtech.mcp.http.admin.AdminCredentialService;
 import com.hbnrtech.mcp.http.admin.AdminPasswordAuthenticationFilter;
 import com.hbnrtech.mcp.http.admin.RuntimeConfigurationService;
 import com.hbnrtech.mcp.tools.GenericMcpTools;
@@ -87,9 +88,16 @@ public class McpHttpServerConfiguration {
    }
 
    @Bean
-   public FilterRegistrationBean<AdminPasswordAuthenticationFilter> adminPasswordAuthenticationFilter(DatabaseMcpHttpProperties properties) {
+   public FilterRegistrationBean<AdminPasswordAuthenticationFilter> adminPasswordAuthenticationFilter(
+      DatabaseMcpHttpProperties properties,
+      AdminCredentialService adminCredentialService
+   ) {
       FilterRegistrationBean<AdminPasswordAuthenticationFilter> registration = new FilterRegistrationBean<>();
-      registration.setFilter(new AdminPasswordAuthenticationFilter(properties.getAdminPasswordHeader(), properties.getAdminPassword()));
+      registration.setFilter(new AdminPasswordAuthenticationFilter(
+         properties.getAdminUsernameHeader(),
+         properties.getAdminPasswordHeader(),
+         adminCredentialService
+      ));
       registration.setUrlPatterns(java.util.List.of(properties.getAdminApiBasePath() + "/*"));
       registration.setDispatcherTypes(EnumSet.of(DispatcherType.REQUEST));
       registration.setOrder(0);

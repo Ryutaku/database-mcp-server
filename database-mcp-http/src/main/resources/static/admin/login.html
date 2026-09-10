@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in · Database MCP Admin</title>
+  <meta name="description" content="Sign in to the Database MCP Server admin console.">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="stylesheet" href="admin.css?v=20260910-r2">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <div class="login-brand">
+      <i class="bi bi-database" aria-hidden="true"></i>
+      <div>
+        <h1>Database MCP</h1>
+        <p>Admin Console</p>
+      </div>
+    </div>
+
+    <form id="loginForm" class="login-form" autocomplete="off" novalidate>
+      <label class="form-group">
+        <span class="form-label">用户名</span>
+        <span class="login-input-wrap">
+          <i class="bi bi-person" aria-hidden="true"></i>
+          <input id="usernameInput" class="form-control" name="username" type="text"
+            value="admin" placeholder="请输入用户名" autocomplete="username" required autofocus>
+        </span>
+      </label>
+
+      <label class="form-group">
+        <span class="form-label">密码</span>
+        <span class="login-input-wrap">
+          <i class="bi bi-shield-lock" aria-hidden="true"></i>
+          <input id="passwordInput" class="form-control" name="password" type="password"
+            placeholder="请输入密码" autocomplete="current-password" required>
+          <button id="togglePassword" class="login-reveal" type="button"
+            aria-label="显示或隐藏密码" title="显示/隐藏密码">
+            <i class="bi bi-eye" aria-hidden="true"></i>
+          </button>
+        </span>
+      </label>
+
+      <label class="login-remember">
+        <input id="rememberInput" type="checkbox" checked>
+        <span>在此设备上记住登录状态</span>
+      </label>
+
+      <div id="loginError" class="login-error hidden" role="alert">
+        <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+        <span id="loginErrorText"></span>
+      </div>
+
+      <button id="loginButton" class="btn btn-primary login-submit" type="submit">
+        <i class="bi bi-box-arrow-in-right" aria-hidden="true"></i>
+        <span id="loginButtonText">登录</span>
+      </button>
+    </form>
+  </main>
+
+  <script src="click-feedback.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>

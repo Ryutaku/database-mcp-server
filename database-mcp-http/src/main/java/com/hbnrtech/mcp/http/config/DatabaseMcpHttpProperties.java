@@ -16,7 +16,9 @@ public class DatabaseMcpHttpProperties {
    private long apiKeyTtlSeconds = 300;
    private long apiKeyAllowedClockSkewSeconds = 30;
    private String adminApiBasePath = "/admin/api";
+   private String adminUsernameHeader = "X-Admin-User";
    private String adminPasswordHeader = "X-Admin-Password";
+   private String adminUsername = "admin";
    private String adminPassword = "";
 
    public String getEndpoint() {
@@ -99,12 +101,28 @@ public class DatabaseMcpHttpProperties {
       this.adminApiBasePath = adminApiBasePath;
    }
 
+   public String getAdminUsernameHeader() {
+      return this.adminUsernameHeader;
+   }
+
+   public void setAdminUsernameHeader(String adminUsernameHeader) {
+      this.adminUsernameHeader = adminUsernameHeader;
+   }
+
    public String getAdminPasswordHeader() {
       return this.adminPasswordHeader;
    }
 
    public void setAdminPasswordHeader(String adminPasswordHeader) {
       this.adminPasswordHeader = adminPasswordHeader;
+   }
+
+   public String getAdminUsername() {
+      return this.adminUsername;
+   }
+
+   public void setAdminUsername(String adminUsername) {
+      this.adminUsername = adminUsername;
    }
 
    public String getAdminPassword() {

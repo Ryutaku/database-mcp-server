@@ -106,6 +106,20 @@ public final class ConfigModels {
    ) {
    }
 
+   public record StoredAdminCredential(
+      String username,
+      String salt,
+      String passwordHash,
+      String updatedAt
+   ) {
+   }
+
+   public record ChangePasswordPayload(
+      String currentPassword,
+      String newPassword
+   ) {
+   }
+
    private static String buildJdbcSuffix(String jdbcParams, String schemaParamName, String schema) {
       Map<String, String> params = new LinkedHashMap<>();
       String normalizedParams = jdbcParams == null ? "" : jdbcParams.trim();

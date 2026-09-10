@@ -1,13 +1,16 @@
 package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.http.admin.ConfigModels.BaseJdbcConfigPayload;
+import com.hbnrtech.mcp.http.admin.ConfigModels.ChangePasswordPayload;
 import com.hbnrtech.mcp.http.admin.ConfigModels.DatasourcePayload;
 import com.hbnrtech.mcp.http.admin.ConfigModels.RuntimeSnapshot;
 import com.hbnrtech.mcp.http.admin.ConfigModels.TestConnectionResult;
+import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,9 +20,14 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("${database-mcp.http.admin-api-base-path:/admin/api}")
 public class AdminConfigController {
    private final RuntimeConfigurationService runtimeConfigurationService;
+   private final AdminCredentialService adminCredentialService;
 
-   public AdminConfigController(RuntimeConfigurationService runtimeConfigurationService) {
+   public AdminConfigController(
+      RuntimeConfigurationService runtimeConfigurationService,
+      AdminCredentialService adminCredentialService
+   ) {
       this.runtimeConfigurationService = runtimeConfigurationService;
+      this.adminCredentialService = adminCredentialService;
    }
 
    @GetMapping("/config")
@@ -55,5 +63,16 @@ public class AdminConfigController {
    @GetMapping("/health")
    public ResponseEntity<Void> health() {
       return ResponseEntity.noContent().build();
+   }
+
+   @GetMapping("/session")
+   public Map<String, String> session() {
+      return Map.of("username", this.adminCredentialService.username());
+   }
+
+   @PostMapping("/password")
+   public Map<String, String> changePassword(@RequestBody ChangePasswordPayload payload) {
+      this.adminCredentialService.changePassword(payload.currentPassword(), payload.newPassword());
+      return Map.of("message", "密码已更新");
    }
 }

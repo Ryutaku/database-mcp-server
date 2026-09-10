@@ -6,7 +6,8 @@
 
   /* =========================  CONFIG  ========================= */
   var adminApiBase = resolveAdminApiBase();
-  var STORAGE_KEY = "database-mcp-admin-password";
+  var USER_STORAGE_KEY = "database-mcp-admin-user";
+  var PASSWORD_STORAGE_KEY = "database-mcp-admin-password";
 
   /* =========================  DOM  ========================= */
   var $id = function (id) { return document.getElementById(id); };
@@ -54,9 +55,19 @@
   var confirmMsgEl   = $id("confirmMessage");
   var confirmResolve = null;
 
+  var basePagerEl   = $id("basePager");
+  var basePageInfo  = $id("basePageInfo");
+  var dsPagerEl     = $id("dsPager");
+  var dsPageInfo    = $id("dsPageInfo");
+
+  var passwordModal = $id("passwordModal");
+  var passwordForm  = $id("passwordForm");
+
   /* =========================  STATE  ========================= */
   var currentBaseConfigs = [];
   var currentDatasources = [];
+  var basePage = 1;
+  var dsPage = 1;
 
   /* =========================================================
      EVENT BINDINGS
@@ -76,6 +87,21 @@
   /* --- Reload --- */
   bind("reloadButton", "click", function () { loadConfig("配置已刷新"); });
 
+  /* --- Sign out --- */
+  bind("logoutButton", "click", function () {
+    showConfirm("退出登录", "确认退出当前管理后台登录？").then(function (ok) {
+      if (!ok) return;
+      clearCredentials();
+      redirectToLogin(false);
+    });
+  });
+
+  /* --- Change password --- */
+  bind("changePasswordBtn", "click", function () {
+    resetPasswordForm();
+    openModal(passwordModal);
+  });
+
   /* --- Create buttons → open empty modal --- */
   bind("createBaseBtn", "click", function () {
     resetBaseForm();
@@ -94,14 +120,26 @@
   /* --- Search (client-side filter) --- */
   if (baseSearchInput) {
     baseSearchInput.addEventListener("input", function () {
+      basePage = 1;
       renderBaseConfigs(currentBaseConfigs);
     });
   }
   if (dsSearchInput) {
     dsSearchInput.addEventListener("input", function () {
+      dsPage = 1;
       renderDatasources(currentDatasources, currentBaseConfigs);
     });
   }
+
+  /* --- Page size selectors --- */
+  bind("basePageSize", "change", function () {
+    basePage = 1;
+    renderBaseConfigs(currentBaseConfigs);
+  });
+  bind("dsPageSize", "change", function () {
+    dsPage = 1;
+    renderDatasources(currentDatasources, currentBaseConfigs);
+  });
 
   /* --- Type switch in base form --- */
   if (baseTypeSelect) {
@@ -161,6 +199,14 @@
     });
   }
 
+  /* --- Change password form submit --- */
+  if (passwordForm) {
+    passwordForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      submitPasswordForm();
+    });
+  }
+
   /* =========================================================
      FORM SUBMISSION
      ========================================================= */
@@ -214,6 +260,34 @@
     }).catch(function (err) {
       showToast(err.message, true);
     });
+  }
+
+  function submitPasswordForm() {
+    var fd = new FormData(passwordForm);
+    var currentPassword = String(fd.get("currentPassword") || "");
+    var newPassword = String(fd.get("newPassword") || "");
+    var confirmPassword = String(fd.get("confirmPassword") || "");
+
+    if (!currentPassword) { showToast("请输入当前密码", true); return; }
+    if (!newPassword) { showToast("请输入新密码", true); return; }
+    if (newPassword !== confirmPassword) { showToast("两次输入的新密码不一致", true); return; }
+    if (newPassword.length < 8 || newPassword.length > 64) { showToast("密码长度需为 8-64 位", true); return; }
+
+    apiFetch("/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
+    }).then(function (r) {
+      closeModal(passwordModal);
+      savePassword(newPassword);
+      showToast((r && r.message) || "密码已更新");
+    }).catch(function (err) {
+      showToast(err.message, true);
+    });
+  }
+
+  function resetPasswordForm() {
+    if (!passwordForm) return;
+    passwordForm.reset();
   }
 
   /* =========================================================
@@ -345,31 +419,55 @@
      API & AUTH
      ========================================================= */
 
-  function ensurePassword(force) {
-    var pw = window.localStorage.getItem(STORAGE_KEY);
-    if (!pw || force) {
-      var today = new Date().toISOString().slice(0, 10);
-      var input = window.prompt("请输入管理后台口令（留空时默认可尝试当天日期，格式 yyyy-MM-dd）", pw || today);
-      if (input && input.trim()) {
-        pw = input.trim();
-        window.localStorage.setItem(STORAGE_KEY, pw);
-        showToast("管理口令已更新");
-      }
-    }
-    return pw || "";
+  function getUsername() {
+    return window.sessionStorage.getItem(USER_STORAGE_KEY) ||
+      window.localStorage.getItem(USER_STORAGE_KEY) || "";
+  }
+
+  function getPassword() {
+    return window.sessionStorage.getItem(PASSWORD_STORAGE_KEY) ||
+      window.localStorage.getItem(PASSWORD_STORAGE_KEY) || "";
+  }
+
+  function savePassword(password) {
+    var persist = window.localStorage.getItem(PASSWORD_STORAGE_KEY) !== null;
+    var storage = persist ? window.localStorage : window.sessionStorage;
+    storage.setItem(PASSWORD_STORAGE_KEY, password);
+  }
+
+  function clearCredentials() {
+    window.localStorage.removeItem(USER_STORAGE_KEY);
+    window.localStorage.removeItem(PASSWORD_STORAGE_KEY);
+    window.sessionStorage.removeItem(USER_STORAGE_KEY);
+    window.sessionStorage.removeItem(PASSWORD_STORAGE_KEY);
+  }
+
+  function redirectToLogin(expired) {
+    var target = window.location.pathname.split("/").pop() || "index.html";
+    var query = "?redirect=" + encodeURIComponent(target);
+    if (expired) query += "&reason=expired";
+    window.location.replace("login.html" + query);
   }
 
   function apiFetch(path, opts) {
     opts = opts || {};
-    var pw = ensurePassword(false);
+    var username = getUsername();
+    var pw = getPassword();
+    if (!username || !pw) {
+      redirectToLogin(false);
+      return Promise.reject(new Error("未登录，正在跳转登录页"));
+    }
+
     var headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
-    if (pw) headers["X-Admin-Password"] = pw;
+    headers["X-Admin-User"] = username;
+    headers["X-Admin-Password"] = pw;
 
     return fetch(adminApiBase + path, Object.assign({}, opts, { headers: headers }))
       .then(function (res) {
         if (res.status === 401) {
-          ensurePassword(true);
-          throw new Error("管理口令无效，请重新输入后重试");
+          clearCredentials();
+          redirectToLogin(true);
+          throw new Error("登录状态已失效，请重新登录");
         }
         if (!res.ok) {
           return res.text().then(function (t) { throw new Error(t || "请求失败: " + res.status); });
@@ -387,6 +485,8 @@
     return apiFetch("/config").then(function (snap) {
       currentBaseConfigs = (snap && snap.baseConfigs) || [];
       currentDatasources = (snap && snap.datasources) || [];
+      basePage = 1;
+      dsPage = 1;
 
       renderBaseOptions(currentBaseConfigs);
       renderBaseConfigs(currentBaseConfigs);
@@ -430,27 +530,35 @@
   function renderBaseConfigs(list) {
     if (!baseTableBody) return;
     var kw = baseSearchInput ? baseSearchInput.value.trim().toLowerCase() : "";
+    var pageSize = getBasePageSize();
     baseTableBody.innerHTML = "";
 
     var filtered = list.filter(function (c) { return matchBase(c, kw); });
 
     if (filtered.length === 0) {
       emptyRow(baseTableBody, 7, '暂无基础配置，点击 "Create Profile" 开始创建。');
+      renderPager(basePagerEl, basePageInfo, 0, 1, pageSize, function () {});
       return;
     }
 
-    filtered.forEach(function (item) {
+    var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (basePage > totalPages) basePage = totalPages;
+    if (basePage < 1) basePage = 1;
+    var start = (basePage - 1) * pageSize;
+    var pageItems = filtered.slice(start, start + pageSize);
+
+    pageItems.forEach(function (item) {
       var type = norm(item.type);
       var target = type === "oracle" ? (item.sid || "-") : (item.databaseName || "-");
       var tr = document.createElement("tr");
 
       tr.innerHTML =
-        '<td data-label="ID">' + esc(item.id) + '</td>' +
-        '<td data-label="Type"><span class="Label Label--accent">' + esc(type) + '</span></td>' +
-        '<td data-label="Host">' + esc(item.host) + '</td>' +
-        '<td data-label="Port">' + esc(item.port) + '</td>' +
-        '<td data-label="Target">' + esc(target) + '</td>' +
-        '<td data-label="JDBC Params">' + esc(item.jdbcParams || "-") + '</td>' +
+        '<td data-label="ID" title="' + esc(item.id) + '">' + esc(item.id) + '</td>' +
+        '<td data-label="Type" title="' + esc(type) + '"><span class="Label Label--accent">' + esc(type) + '</span></td>' +
+        '<td data-label="Host" title="' + esc(item.host) + '">' + esc(item.host) + '</td>' +
+        '<td data-label="Port" title="' + esc(item.port) + '">' + esc(item.port) + '</td>' +
+        '<td data-label="Target" title="' + esc(target) + '">' + esc(target) + '</td>' +
+        '<td data-label="JDBC Params" title="' + esc(item.jdbcParams || "-") + '">' + esc(item.jdbcParams || "-") + '</td>' +
         '<td data-label="Actions">' +
           '<div class="row-actions">' +
             '<button class="btn btn-sm btn-icon" type="button" data-act="edit" title="编辑"><i class="bi bi-pencil"></i></button>' +
@@ -476,11 +584,17 @@
 
       baseTableBody.appendChild(tr);
     });
+
+    renderPager(basePagerEl, basePageInfo, filtered.length, basePage, pageSize, function (page) {
+      basePage = page;
+      renderBaseConfigs(currentBaseConfigs);
+    });
   }
 
   function renderDatasources(dsList, baseList) {
     if (!dsTableBody) return;
     var kw = dsSearchInput ? dsSearchInput.value.trim().toLowerCase() : "";
+    var pageSize = getDsPageSize();
     dsTableBody.innerHTML = "";
 
     var baseMap = {};
@@ -490,21 +604,28 @@
 
     if (filtered.length === 0) {
       emptyRow(dsTableBody, 6, '暂无数据源映射，点击 "Create Datasource" 开始创建。');
+      renderPager(dsPagerEl, dsPageInfo, 0, 1, pageSize, function () {});
       return;
     }
 
-    filtered.forEach(function (item) {
+    var totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (dsPage > totalPages) dsPage = totalPages;
+    if (dsPage < 1) dsPage = 1;
+    var start = (dsPage - 1) * pageSize;
+    var pageItems = filtered.slice(start, start + pageSize);
+
+    pageItems.forEach(function (item) {
       var base = baseMap[item.baseConfigId];
       var resolved = buildTarget(base, item);
       var schema = item.schema || "跟随连接";
 
       var tr = document.createElement("tr");
       tr.innerHTML =
-        '<td data-label="Datasource ID">' + esc(item.id) + '</td>' +
-        '<td data-label="Base Profile"><span class="Label Label--accent">' + esc(item.baseConfigId) + '</span></td>' +
-        '<td data-label="Username">' + esc(item.username || "-") + '</td>' +
-        '<td data-label="Schema">' + esc(schema) + '</td>' +
-        '<td data-label="Resolved Target">' + esc(resolved) + '</td>' +
+        '<td data-label="Datasource ID" title="' + esc(item.id) + '">' + esc(item.id) + '</td>' +
+        '<td data-label="Base Profile" title="' + esc(item.baseConfigId) + '"><span class="Label Label--accent">' + esc(item.baseConfigId) + '</span></td>' +
+        '<td data-label="Username" title="' + esc(item.username || "-") + '">' + esc(item.username || "-") + '</td>' +
+        '<td data-label="Schema" title="' + esc(schema) + '">' + esc(schema) + '</td>' +
+        '<td data-label="Resolved Target" title="' + esc(resolved) + '">' + esc(resolved) + '</td>' +
         '<td data-label="Actions">' +
           '<div class="row-actions">' +
             '<button class="btn btn-sm btn-icon icon-success" type="button" data-act="test" title="测试连接"><i class="bi bi-plug"></i></button>' +
@@ -536,6 +657,11 @@
       });
 
       dsTableBody.appendChild(tr);
+    });
+
+    renderPager(dsPagerEl, dsPageInfo, filtered.length, dsPage, pageSize, function (page) {
+      dsPage = page;
+      renderDatasources(currentDatasources, currentBaseConfigs);
     });
   }
 
@@ -701,6 +827,81 @@
     return p + "/api";
   }
 
+  function getBasePageSize() {
+    var el = $id("basePageSize");
+    var size = el ? parseInt(el.value, 10) : 10;
+    return size > 0 ? size : 10;
+  }
+
+  function getDsPageSize() {
+    var el = $id("dsPageSize");
+    var size = el ? parseInt(el.value, 10) : 10;
+    return size > 0 ? size : 10;
+  }
+
+  function fmtNum(v) {
+    var n = Number(v);
+    return isNaN(n) ? "0" : n.toLocaleString("zh-CN");
+  }
+
+  function renderPager(pagerEl, infoEl, totalItems, page, pageSize, onGo) {
+    var totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    if (infoEl) {
+      var from = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+      var to = totalItems === 0 ? 0 : Math.min(page * pageSize, totalItems);
+      infoEl.textContent = "显示第 " + fmtNum(from) + " 到 " + fmtNum(to) + " 条，共 " + fmtNum(totalItems) + " 条";
+    }
+
+    if (!pagerEl) return;
+    pagerEl.innerHTML = "";
+    if (totalPages <= 1) return;
+
+    function makeButton(label, targetPage, opts) {
+      opts = opts || {};
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "page-btn" + (opts.active ? " active" : "");
+      btn.innerHTML = label;
+      if (opts.disabled || opts.active) {
+        btn.disabled = true;
+      } else {
+        btn.addEventListener("click", function () { onGo(targetPage); });
+      }
+      return btn;
+    }
+
+    pagerEl.appendChild(makeButton('<i class="bi bi-chevron-left"></i>', page - 1, { disabled: page <= 1 }));
+
+    buildPageList(totalPages, page).forEach(function (item) {
+      if (item === "...") {
+        var gap = document.createElement("span");
+        gap.className = "page-gap";
+        gap.textContent = "…";
+        pagerEl.appendChild(gap);
+      } else {
+        pagerEl.appendChild(makeButton(String(item), item, { active: item === page }));
+      }
+    });
+
+    pagerEl.appendChild(makeButton('<i class="bi bi-chevron-right"></i>', page + 1, { disabled: page >= totalPages }));
+  }
+
+  function buildPageList(totalPages, current) {
+    if (totalPages <= 7) {
+      var pages = [];
+      for (var i = 1; i <= totalPages; i++) pages.push(i);
+      return pages;
+    }
+    if (current <= 4) {
+      return [1, 2, 3, 4, 5, "...", totalPages];
+    }
+    if (current >= totalPages - 3) {
+      return [1, "...", totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages];
+    }
+    return [1, "...", current - 1, current, current + 1, "...", totalPages];
+  }
+
   function norm(v) { return String(v || "").trim().toLowerCase(); }
 
   function buildTarget(base, ds) {
@@ -742,6 +943,11 @@
   resetBaseForm();
   resetDsForm();
   switchView("base");
-  loadConfig();
+
+  if (!getUsername() || !getPassword()) {
+    redirectToLogin(false);
+  } else {
+    loadConfig();
+  }
 
 })();

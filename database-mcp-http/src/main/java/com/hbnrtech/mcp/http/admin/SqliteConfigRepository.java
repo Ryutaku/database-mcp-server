@@ -2,10 +2,12 @@ package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.http.admin.ConfigModels.RuntimeSnapshot;
+import com.hbnrtech.mcp.http.admin.ConfigModels.StoredAdminCredential;
 import com.hbnrtech.mcp.http.admin.ConfigModels.StoredBaseJdbcConfig;
 import com.hbnrtech.mcp.http.admin.ConfigModels.StoredDatasource;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -53,6 +55,41 @@ public class SqliteConfigRepository {
       );
 
       return new RuntimeSnapshot(baseConfigs, datasources);
+   }
+
+   public Optional<StoredAdminCredential> loadAdminCredential() {
+      List<StoredAdminCredential> rows = this.jdbcTemplate.query(
+         """
+         select username, salt, password_hash, updated_at
+         from mcp_admin_credential
+         where id = 1
+         """,
+         (rs, rowNum) -> new StoredAdminCredential(
+            rs.getString("username"),
+            rs.getString("salt"),
+            rs.getString("password_hash"),
+            rs.getString("updated_at")
+         )
+      );
+      return rows.stream().findFirst();
+   }
+
+   public void upsertAdminCredential(StoredAdminCredential credential) {
+      this.jdbcTemplate.update(
+         """
+         insert into mcp_admin_credential(id, username, salt, password_hash, updated_at)
+         values (1, ?, ?, ?, ?)
+         on conflict(id) do update set
+           username = excluded.username,
+           salt = excluded.salt,
+           password_hash = excluded.password_hash,
+           updated_at = excluded.updated_at
+         """,
+         credential.username(),
+         credential.salt(),
+         credential.passwordHash(),
+         credential.updatedAt()
+      );
    }
 
    public boolean isEmpty() {
@@ -145,6 +182,17 @@ public class SqliteConfigRepository {
            password text not null,
            schema_name text,
            foreign key (base_config_id) references mcp_base_jdbc_config(id) on delete cascade
+         )
+         """
+      );
+      this.jdbcTemplate.execute(
+         """
+         create table if not exists mcp_admin_credential (
+           id integer primary key check (id = 1),
+           username text not null,
+           salt text not null,
+           password_hash text not null,
+           updated_at text not null
          )
          """
       );
