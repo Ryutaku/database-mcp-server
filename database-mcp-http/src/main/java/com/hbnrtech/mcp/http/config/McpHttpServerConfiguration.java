@@ -7,7 +7,7 @@ import com.hbnrtech.mcp.http.admin.AdminCredentialService;
 import com.hbnrtech.mcp.http.admin.AdminPasswordAuthenticationFilter;
 import com.hbnrtech.mcp.http.admin.RuntimeConfigurationService;
 import com.hbnrtech.mcp.tools.GenericMcpTools;
-import io.modelcontextprotocol.json.McpJsonMapper;
+import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider;
@@ -39,7 +39,7 @@ public class McpHttpServerConfiguration {
    @Bean
    public HttpServletStreamableServerTransportProvider mcpTransportProvider(DatabaseMcpHttpProperties properties) {
       return HttpServletStreamableServerTransportProvider.builder()
-         .jsonMapper(McpJsonMapper.createDefault())
+         .jsonMapper(McpJsonDefaults.getMapper())
          .mcpEndpoint(properties.getEndpoint())
          .keepAliveInterval(properties.getKeepAliveInterval())
          .disallowDelete(properties.isDisallowDelete())
@@ -49,7 +49,7 @@ public class McpHttpServerConfiguration {
    @Bean
    public McpSyncServer mcpSyncServer(HttpServletStreamableServerTransportProvider transport, DatabaseMcpRuntime runtime) {
       var builder = McpServer.sync(transport);
-      DatabaseMcpRuntimeFactory.configureServer(builder, McpJsonMapper.createDefault(), runtime);
+      DatabaseMcpRuntimeFactory.configureServer(builder, McpJsonDefaults.getMapper(), runtime);
       McpSyncServer server = builder.build();
       LOGGER.info("Registered {} MCP tools", runtime.tools().getRegisteredTools().size());
       return server;

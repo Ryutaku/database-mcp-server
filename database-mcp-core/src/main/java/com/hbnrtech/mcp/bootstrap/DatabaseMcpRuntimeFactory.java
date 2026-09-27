@@ -53,7 +53,7 @@ public final class DatabaseMcpRuntimeFactory {
    }
 
    public static void configureServer(McpServer.SyncSpecification<?> builder, McpJsonMapper jsonMapper, DatabaseMcpRuntime runtime) {
-      builder.jsonMapper(jsonMapper).serverInfo("database-mcp-server", "1.1.0");
+      builder.jsonMapper(jsonMapper).serverInfo("database-mcp-server", "1.2.0");
       ToolRegistry.register(builder, runtime.tools());
    }
 

@@ -20,7 +20,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <mcp.sdk.version>0.17.2</mcp.sdk.version>
+        <mcp.sdk.version>2.0.1</mcp.sdk.version>
         <postgresql.version>42.7.3</postgresql.version>
         <ojdbc.version>23.3.0.23.09</ojdbc.version>
         <mysql.connector.version>8.4.0</mysql.connector.version>
@@ -44,6 +44,13 @@
                 <version>${spring.boot.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- MCP SDK 2.x 的 Jackson 3 栈依赖 jackson-annotations 2.21+（JsonSerializeAs 等新注解），
+                 这里覆盖 Spring Boot BOM 管理的 2.19.x，annotations 属于纯注解、向后兼容 -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-annotations</artifactId>
+                <version>2.22</version>
             </dependency>
             <dependency>
                 <groupId>com.mysql</groupId>

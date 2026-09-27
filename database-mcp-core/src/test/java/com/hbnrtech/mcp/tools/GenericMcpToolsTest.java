@@ -37,7 +37,7 @@ class GenericMcpToolsTest {
 
       assertTrue(hasSchemaProperty(tools, "db_create_schema"));
       assertTrue(hasSchemaProperty(tools, "db_switch_schema"));
-      assertNull(findTool(tools, "db_compare_schemas").tool().inputSchema().properties().get("schema"));
+      assertNull(schemaProperties(findTool(tools, "db_compare_schemas")).get("schema"));
    }
 
    @Test
@@ -92,6 +92,11 @@ class GenericMcpToolsTest {
    }
 
    private static boolean hasSchemaProperty(GenericMcpTools tools, String name) {
-      return findTool(tools, name).tool().inputSchema().properties().get("schema") != null;
+      return schemaProperties(findTool(tools, name)).containsKey("schema");
+   }
+
+   private static Map<?, ?> schemaProperties(RegisteredTool tool) {
+      Object properties = tool.tool().inputSchema().get("properties");
+      return properties instanceof Map<?, ?> map ? map : Map.of();
    }
 }

@@ -207,7 +207,7 @@ public class GenericMcpTools {
       return new McpSchema.Tool(name, null, description, this.parseJsonSchema(schema), null, null, null);
    }
 
-   private McpSchema.JsonSchema parseJsonSchema(String schema) {
+   private Map<String, Object> parseJsonSchema(String schema) {
       try {
          ObjectNode root = (ObjectNode) TOOL_SCHEMA_MAPPER.readTree(schema);
          ObjectNode properties = root.with("properties");
