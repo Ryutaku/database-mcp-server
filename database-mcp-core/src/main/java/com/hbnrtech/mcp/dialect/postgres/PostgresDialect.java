@@ -114,13 +114,18 @@ public class PostgresDialect implements DatabaseDialect {
    @Override
    public Optional<String> sqlListIndexes(boolean filterByTable) {
       if (filterByTable) {
+         // pg_indexes has no indexrelid column, so the size comes from the pg_class row that
+         // pg_indexes itself joins to. The namespace has to be pinned: index names are unique per
+         // schema, so matching on relname alone can pick up an index of the same name elsewhere.
          return Optional.of(
-            "SELECT indexname AS index_name, indexdef AS index_definition,\n"
-               + "       pg_size_pretty(pg_relation_size(indexrelid)) AS index_size\n"
-               + "FROM pg_indexes\n"
-               + "JOIN pg_class ON pg_class.relname = indexname\n"
-               + "WHERE schemaname = current_schema() AND tablename = ?\n"
-               + "ORDER BY indexname"
+            "SELECT i.indexname AS index_name,\n"
+               + "       i.indexdef AS index_definition,\n"
+               + "       pg_size_pretty(pg_relation_size(c.oid)) AS index_size\n"
+               + "FROM pg_indexes i\n"
+               + "JOIN pg_class c ON c.relname = i.indexname\n"
+               + "JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = i.schemaname\n"
+               + "WHERE i.schemaname = current_schema() AND i.tablename = ?\n"
+               + "ORDER BY i.indexname"
          );
       }
 
