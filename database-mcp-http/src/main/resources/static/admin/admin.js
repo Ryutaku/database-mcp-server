@@ -815,7 +815,11 @@
   function loadUsage(refreshFilters, successMsg) {
     usageLoaded = true;
     var filters = refreshFilters
-      ? apiFetch("/usage-filters").then(applyUsageFilters).catch(function () {})
+      ? apiFetch("/usage-filters").then(applyUsageFilters).catch(function (err) {
+          /* A missing filter list must not sink the ranking, but an empty dropdown with no
+             trace of why is undebuggable from the console alone. */
+          console.warn("usage filters unavailable:", err.message);
+        })
       : Promise.resolve();
     return Promise.all([
       filters,
@@ -878,16 +882,19 @@
     });
 
     usageSummaryEl.innerHTML =
-      usageCard("时间窗口", windowLabel(summary.window)) +
-      usageCard("总调用", fmtNum(total)) +
-      usageCard("失败", fmtNum(summary.totalFailures)) +
-      usageCard("涉及数据源", fmtNum((summary.datasources || []).length)) +
-      usageCard("最近调用", fmtTime(lastSeen));
+      usageCard("时间窗口", windowLabel(summary.window), "bi-clock-history") +
+      usageCard("总调用", fmtNum(total), "bi-lightning-charge") +
+      usageCard("失败", fmtNum(summary.totalFailures), "bi-exclamation-triangle usage-icon-bad") +
+      usageCard("涉及数据源", fmtNum((summary.datasources || []).length), "bi-database") +
+      usageCard("最近调用", fmtTime(lastSeen), "bi-stopwatch");
   }
 
-  function usageCard(label, value) {
+  function usageCard(label, value, icon) {
     return '<div class="usage-card">' +
-      '<span class="usage-card-label">' + esc(label) + "</span>" +
+      '<span class="usage-card-label">' +
+        (icon ? '<i class="bi ' + icon + '" aria-hidden="true"></i>' : "") +
+        esc(label) +
+      "</span>" +
       '<span class="usage-card-value">' + esc(value) + "</span>" +
       "</div>";
   }
@@ -1321,9 +1328,11 @@
     /* Cells can only be measured once their panel is visible. */
     markAllClippedCells();
 
-    /* The hotspot panel is the only view that reads a growing store, so it loads on first use. */
+    /* The hotspot panel is the only view that reads a growing store, so it loads on first use.
+       The first load must also fetch the filter values: the detail dropdowns are built from
+       them, and skipping that left both dropdowns empty until the reader hit 刷新. */
     if (view === "usage" && !usageLoaded) {
-      loadUsage(false);
+      loadUsage(true);
     }
   }
 
