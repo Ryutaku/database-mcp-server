@@ -1,5 +1,6 @@
 package com.hbnrtech.mcp.execution;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 
@@ -35,13 +36,11 @@ public abstract class BaseSqlSafetyPolicy implements SqlSafetyPolicy {
       }
 
       String upperSql = normalizeSql(sql).toUpperCase(Locale.ROOT);
-      String[] patterns = dangerousPatterns();
-      String[] descriptions = dangerousDescriptions();
 
-      for (int i = 0; i < patterns.length; i++) {
-         String regex = "(.*\\b)?" + patterns[i] + "(\\b.*)?";
+      for (ExecuteBlacklistRule rule : this.executeBlacklist()) {
+         String regex = "(.*\\b)?" + rule.toRegex() + "(\\b.*)?";
          if (upperSql.matches(regex)) {
-            return Optional.of("Blocked dangerous operation: " + descriptions[i]);
+            return Optional.of("Blocked dangerous operation: " + rule.description());
          }
       }
 
@@ -56,7 +55,8 @@ public abstract class BaseSqlSafetyPolicy implements SqlSafetyPolicy {
       return lowerSql.matches(".*\\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|vacuum|analyze|comment|copy)\\b.*");
    }
 
-   protected abstract String[] dangerousPatterns();
-
-   protected abstract String[] dangerousDescriptions();
+   /**
+    * The statements this policy refuses to execute.
+    */
+   protected abstract List<ExecuteBlacklistRule> executeBlacklist();
 }

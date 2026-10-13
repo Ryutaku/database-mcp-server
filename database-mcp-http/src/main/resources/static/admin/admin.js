@@ -37,6 +37,11 @@
   var dsSchemaHint      = $id("datasourceSchemaHint");
   var dsDbTypeBadge     = $id("datasourceDbTypeBadge");
 
+  var blacklistSection  = $id("blacklistSection");
+  var blacklistRules    = $id("blacklistRules");
+  var blacklistEmptyHint = $id("blacklistEmptyHint");
+  var blacklistRestoreBtn = $id("blacklistRestoreDefaults");
+
   var baseCountEl = $id("baseCount");
   var dsCountEl   = $id("dsCount");
 
@@ -63,11 +68,26 @@
   var passwordModal = $id("passwordModal");
   var passwordForm  = $id("passwordForm");
 
+  var blacklistViewOverlay = $id("blacklistViewOverlay");
+  var blacklistViewTitle   = $id("blacklistViewTitle");
+  var blacklistViewType    = $id("blacklistViewType");
+  var blacklistViewSummary = $id("blacklistViewSummary");
+  var blacklistViewList    = $id("blacklistViewList");
+
   /* =========================  STATE  ========================= */
   var currentBaseConfigs = [];
   var currentDatasources = [];
   var basePage = 1;
   var dsPage = 1;
+
+  /* Rule catalogs are per database type and never change at runtime, so they are fetched once. */
+  var blacklistCatalogs = {};
+
+  /* Rule ids of the datasource being edited. null means "not saved yet, show the defaults". */
+  var dsBlacklistSelection = null;
+
+  /* Datasource whose blacklist is currently shown in the read-only viewer. */
+  var blacklistViewTarget = null;
 
   /* =========================================================
      EVENT BINDINGS
@@ -148,8 +168,34 @@
 
   /* --- Base profile switch in datasource form --- */
   if (baseConfigSelect) {
-    baseConfigSelect.addEventListener("change", updateDsFormByType);
+    baseConfigSelect.addEventListener("change", function () {
+      /* The rule catalog is per database type, so a switched profile starts from that type's defaults. */
+      dsBlacklistSelection = null;
+      updateDsFormByType();
+    });
   }
+
+  /* --- Execute blacklist checkboxes --- */
+  if (blacklistRestoreBtn) {
+    blacklistRestoreBtn.addEventListener("click", function () {
+      dsBlacklistSelection = null;
+      renderBlacklistRules();
+    });
+  }
+  if (blacklistRules) {
+    blacklistRules.addEventListener("change", updateBlacklistEmptyHint);
+  }
+
+  /* --- Blacklist viewer: jump straight into editing the datasource it describes --- */
+  bind("blacklistViewEdit", "click", function () {
+    var item = blacklistViewTarget;
+    if (!item) return;
+    closeModal(blacklistViewOverlay);
+    fillDsForm(item);
+    dsModalTitle.textContent = "Edit Datasource: " + item.id;
+    dsForm.elements.id.setAttribute("readonly", "readonly");
+    openModal(dsModal);
+  });
 
   /* --- Modal close: all .js-modal-close buttons --- */
   document.addEventListener("click", function (e) {
@@ -244,13 +290,29 @@
 
     var baseId = String(fd.get("baseConfigId") || "").trim();
     var selBase = currentBaseConfigs.find(function (c) { return c.id === baseId; });
+    var blacklist = collectBlacklistSelection();
     var payload = {
       baseConfigId: baseId,
       username: String(fd.get("username") || "").trim(),
       password: String(fd.get("password") || "").trim(),
-      schema: norm(selBase && selBase.type) === "oracle" ? "" : String(fd.get("schema") || "").trim()
+      schema: norm(selBase && selBase.type) === "oracle" ? "" : String(fd.get("schema") || "").trim(),
+      executeBlacklist: blacklist
     };
 
+    if (blacklist.length === 0) {
+      showConfirm(
+        "清空执行黑名单",
+        "该数据源的 db_execute 将不拦截任何语句，包括 DROP DATABASE 和 DROP USER。确认保存？"
+      ).then(function (ok) {
+        if (ok) saveDatasource(id, payload);
+      });
+      return;
+    }
+
+    saveDatasource(id, payload);
+  }
+
+  function saveDatasource(id, payload) {
     apiFetch("/datasources/" + encodeURIComponent(id), {
       method: "PUT",
       body: JSON.stringify(payload)
@@ -585,6 +647,8 @@
       baseTableBody.appendChild(tr);
     });
 
+    markClippedCells(baseTableBody);
+
     renderPager(basePagerEl, basePageInfo, filtered.length, basePage, pageSize, function (page) {
       basePage = page;
       renderBaseConfigs(currentBaseConfigs);
@@ -603,7 +667,7 @@
     var filtered = dsList.filter(function (c) { return matchDs(c, kw); });
 
     if (filtered.length === 0) {
-      emptyRow(dsTableBody, 6, '暂无数据源映射，点击 "Create Datasource" 开始创建。');
+      emptyRow(dsTableBody, 7, '暂无数据源映射，点击 "Create Datasource" 开始创建。');
       renderPager(dsPagerEl, dsPageInfo, 0, 1, pageSize, function () {});
       return;
     }
@@ -626,6 +690,7 @@
         '<td data-label="Username" title="' + esc(item.username || "-") + '">' + esc(item.username || "-") + '</td>' +
         '<td data-label="Schema" title="' + esc(schema) + '">' + esc(schema) + '</td>' +
         '<td data-label="Resolved Target" title="' + esc(resolved) + '">' + esc(resolved) + '</td>' +
+        '<td data-label="Execute Blacklist">' + blacklistCell(item) + '</td>' +
         '<td data-label="Actions">' +
           '<div class="row-actions">' +
             '<button class="btn btn-sm btn-icon icon-success" type="button" data-act="test" title="测试连接"><i class="bi bi-plug"></i></button>' +
@@ -656,8 +721,14 @@
         });
       });
 
+      tr.querySelector('[data-act="bl"]').addEventListener("click", function () {
+        openBlacklistView(item, base);
+      });
+
       dsTableBody.appendChild(tr);
     });
+
+    markClippedCells(dsTableBody);
 
     renderPager(dsPagerEl, dsPageInfo, filtered.length, dsPage, pageSize, function (page) {
       dsPage = page;
@@ -702,6 +773,7 @@
     dsForm.elements.username.value = item.username || "";
     dsForm.elements.password.value = item.password || "";
     dsForm.elements.schema.value = item.schema || "";
+    dsBlacklistSelection = item.executeBlacklist || null;
     updateDsFormByType();
   }
 
@@ -714,6 +786,7 @@
   function resetDsForm() {
     dsForm.reset();
     if (baseConfigSelect) baseConfigSelect.value = "";
+    dsBlacklistSelection = null;
     updateDsFormByType();
   }
 
@@ -769,10 +842,12 @@
       dsForm.elements.schema.required = false;
       hintSpan.textContent = "schema 是高级选项，默认建议留空，由连接或数据库默认策略决定。";
       if (dsDbTypeBadge) { dsDbTypeBadge.textContent = "DB Type: —"; dsDbTypeBadge.className = "Label Label--secondary"; }
+      renderBlacklistRules();
       return;
     }
 
     if (dsDbTypeBadge) { dsDbTypeBadge.textContent = "DB Type: " + type; dsDbTypeBadge.className = "Label Label--accent"; }
+    renderBlacklistRules();
 
     if (type === "oracle") {
       if (dsSchemaField) dsSchemaField.classList.add("hidden");
@@ -801,6 +876,175 @@
   }
 
   /* =========================================================
+     EXECUTE BLACKLIST
+     ========================================================= */
+
+  function findSelectedBase() {
+    var selId = dsForm ? dsForm.elements.baseConfigId.value : "";
+    return currentBaseConfigs.find(function (c) { return c.id === selId; }) || null;
+  }
+
+  /**
+   * Renders the rule checklist for the selected base profile's database type. The catalog comes
+   * from the server, so the page never hardcodes which statements the server knows how to block.
+   */
+  function renderBlacklistRules() {
+    if (!blacklistSection || !blacklistRules) return;
+
+    var base = findSelectedBase();
+    if (!base) {
+      blacklistSection.classList.add("hidden");
+      blacklistRules.innerHTML = "";
+      updateBlacklistEmptyHint();
+      return;
+    }
+
+    blacklistSection.classList.remove("hidden");
+    var type = norm(base.type);
+    var catalog = blacklistCatalogs[type];
+
+    if (!catalog) {
+      blacklistRules.innerHTML = '<div class="blacklist-note">加载规则清单…</div>';
+      apiFetch("/blacklist-rules?type=" + encodeURIComponent(type)).then(function (catalog) {
+        blacklistCatalogs[type] = catalog;
+        renderBlacklistRules();
+      }).catch(function (err) {
+        blacklistRules.innerHTML = '<div class="blacklist-note">规则清单加载失败：' + esc(err.message) + "</div>";
+      });
+      return;
+    }
+
+    /* An empty selection is a real setting ("block nothing"), so only null means "show the defaults". */
+    var selected = dsBlacklistSelection == null ? catalog.defaultRuleIds : dsBlacklistSelection;
+
+    blacklistRules.innerHTML = catalog.rules.map(function (rule) {
+      var checked = selected.indexOf(rule.id) !== -1;
+      return '<label class="blacklist-rule">' +
+        '<input type="checkbox" name="blacklistRule" value="' + esc(rule.id) + '"' + (checked ? " checked" : "") + ">" +
+        "<span>" + esc(rule.label) + "<code>" + esc(rule.phrase) + "</code></span>" +
+        "</label>";
+    }).join("");
+
+    updateBlacklistEmptyHint();
+  }
+
+  function collectBlacklistSelection() {
+    if (!blacklistRules) return [];
+    var boxes = blacklistRules.querySelectorAll('input[name="blacklistRule"]:checked');
+    var ids = [];
+    for (var i = 0; i < boxes.length; i++) {
+      ids.push(boxes[i].value);
+    }
+    return ids;
+  }
+
+  function updateBlacklistEmptyHint() {
+    if (!blacklistEmptyHint) return;
+    blacklistEmptyHint.classList.toggle("show", collectBlacklistSelection().length === 0);
+  }
+
+  /**
+   * Table cell showing how tightly this datasource fences in db_execute. The badge is a button:
+   * a count alone cannot tell you which statements are blocked, so clicking it opens the full list.
+   */
+  function blacklistCell(item) {
+    var ruleIds = item.executeBlacklist;
+    var variant, text, hint;
+
+    if (ruleIds === null || ruleIds === undefined) {
+      variant = "Label--secondary";
+      text = "默认";
+      hint = "沿用该数据库的默认黑名单，点击查看完整列表";
+    } else if (ruleIds.length === 0) {
+      variant = "Label--danger";
+      text = "无限制";
+      hint = "不拦截任何语句，点击查看完整列表";
+    } else {
+      variant = "Label--success";
+      text = ruleIds.length + " 条";
+      hint = "点击查看完整黑名单";
+    }
+
+    return '<button class="Label ' + variant + ' Label--clickable" type="button" data-act="bl" title="' + esc(hint) + '">' +
+      text + "</button>";
+  }
+
+  /**
+   * Opens the read-only blacklist viewer for one datasource.
+   */
+  function openBlacklistView(item, base) {
+    if (!blacklistViewOverlay) return;
+
+    blacklistViewTarget = item;
+    var type = base ? norm(base.type) : "";
+    var ruleIds = item.executeBlacklist;
+    var usingDefaults = ruleIds === null || ruleIds === undefined;
+
+    blacklistViewTitle.textContent = "执行黑名单 · " + item.id;
+    blacklistViewType.textContent = type ? type.toUpperCase() : "未知类型";
+    blacklistViewList.innerHTML = "";
+    blacklistViewSummary.textContent = "";
+    openModal(blacklistViewOverlay);
+
+    if (!type) {
+      blacklistViewSummary.textContent = "该数据源的基础配置缺失，取不到规则清单。";
+      return;
+    }
+
+    var catalog = blacklistCatalogs[type];
+    if (catalog) {
+      renderBlacklistView(type, catalog, ruleIds, usingDefaults);
+      return;
+    }
+
+    blacklistViewSummary.textContent = "加载规则清单…";
+    apiFetch("/blacklist-rules?type=" + encodeURIComponent(type)).then(function (loaded) {
+      blacklistCatalogs[type] = loaded;
+      /* The viewer may have been closed, or pointed at another row, while loading. */
+      if (blacklistViewTarget === item) {
+        renderBlacklistView(type, loaded, ruleIds, usingDefaults);
+      }
+    }).catch(function (err) {
+      blacklistViewSummary.textContent = "规则清单加载失败：" + err.message;
+    });
+  }
+
+  /** Renders the whole catalog with each rule marked 拦截 / 放行, so the gaps are visible too. */
+  function renderBlacklistView(type, catalog, ruleIds, usingDefaults) {
+    var selected = usingDefaults ? (catalog.defaultRuleIds || []) : ruleIds;
+    var blocked = 0;
+
+    catalog.rules.forEach(function (rule) {
+      if (selected.indexOf(rule.id) !== -1) blocked++;
+    });
+
+    if (usingDefaults) {
+      blacklistViewSummary.innerHTML =
+        "未单独配置，沿用 " + esc(type.toUpperCase()) + " 默认黑名单：拦截 <strong>" + blocked +
+        "</strong> 条，放行 " + (catalog.rules.length - blocked) + " 条。";
+    } else if (selected.length === 0) {
+      blacklistViewSummary.innerHTML =
+        '<span class="blacklist-view-warn">黑名单已清空：db_execute 不拦截任何语句，包括 DROP DATABASE。</span>';
+    } else {
+      blacklistViewSummary.innerHTML =
+        "已拦截 <strong>" + blocked + "</strong> 条，放行 " + (catalog.rules.length - blocked) + " 条。";
+    }
+
+    blacklistViewList.innerHTML = catalog.rules.map(function (rule) {
+      var on = selected.indexOf(rule.id) !== -1;
+      return '<li class="blacklist-view-item' + (on ? " is-on" : " is-off") + '">' +
+        '<span class="blacklist-view-state"><i class="bi ' + (on ? "bi-check-circle-fill" : "bi-dash-circle") +
+          '" aria-hidden="true"></i>' + (on ? "拦截" : "放行") + "</span>" +
+        '<span class="blacklist-view-main">' +
+          '<span class="blacklist-view-label">' + esc(rule.label) + "</span>" +
+          "<code>" + esc(rule.phrase) + "</code>" +
+          (rule.description ? '<span class="blacklist-view-desc">' + esc(rule.description) + "</span>" : "") +
+        "</span>" +
+        "</li>";
+    }).join("");
+  }
+
+  /* =========================================================
      NAVIGATION
      ========================================================= */
 
@@ -815,6 +1059,8 @@
     for (var j = 0; j < pans.length; j++) {
       pans[j].classList.toggle("active", pans[j].getAttribute("data-panel") === view);
     }
+    /* Cells can only be measured once their panel is visible. */
+    markAllClippedCells();
   }
 
   /* =========================================================
@@ -842,6 +1088,28 @@
   function fmtNum(v) {
     var n = Number(v);
     return isNaN(n) ? "0" : n.toLocaleString("zh-CN");
+  }
+
+  /**
+   * Table cells are single-line with an ellipsis. Flag the ones whose text is
+   * actually cut, so the CSS can advertise them (help cursor + dotted underline)
+   * and the title tooltip reads as intentional instead of appearing from nowhere.
+   */
+  function markClippedCells(tbody) {
+    if (!tbody) return;
+    var cells = tbody.querySelectorAll("td[data-label]");
+    for (var i = 0; i < cells.length; i++) {
+      var cell = cells[i];
+      /* A hidden panel has no layout (clientWidth 0), which would make every
+         cell look clipped. Skip those; switchView re-marks once it is shown. */
+      if (!cell.clientWidth) continue;
+      cell.classList.toggle("is-clipped", cell.scrollWidth > cell.clientWidth + 1);
+    }
+  }
+
+  function markAllClippedCells() {
+    markClippedCells(baseTableBody);
+    markClippedCells(dsTableBody);
   }
 
   function renderPager(pagerEl, infoEl, totalItems, page, pageSize, onGo) {
@@ -943,6 +1211,13 @@
   resetBaseForm();
   resetDsForm();
   switchView("base");
+
+  /* Whether a value is cut depends on the width available, so re-check on resize. */
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(markAllClippedCells, 150);
+  });
 
   if (!getUsername() || !getPassword()) {
     redirectToLogin(false);

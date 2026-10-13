@@ -65,31 +65,75 @@ body.admin-app {
 
 /* ---------- Cursor Rules ---------- */
 /*
- * Requirement: non-link elements must NOT use pointer (hand) cursor.
- * body cursor:auto gives text I-beam on text, default arrow elsewhere.
- * Links explicitly get pointer. Buttons/selects stay at default.
+ * Cursor policy, following the conventions the major design systems use
+ * (GitHub Primer, Ant Design, Material Web, and NN/g's cursor research):
+ *
+ *   pointer      — activates on click: links, buttons, tabs, pager, selects,
+ *                  checkboxes, checkbox rows, clickable badges
+ *   text         — content to read and select: inputs, textareas, clipped cells
+ *   move         — the modal header, which really does drag
+ *   not-allowed  — disabled controls
+ *   default      — decoration and read-only display: nothing to act on
+ *
+ * The hand cursor is reserved for things you can act on. NN/g's finding is that
+ * overusing it costs discoverability — if everything is a hand, nothing is.
  */
-a[href] {
+a[href],
+.btn,
+.page-btn,
+.UnderlineNav-item,
+.Label--clickable,
+.blacklist-rule,
+select,
+input[type="checkbox"],
+input[type="radio"] {
   cursor: pointer;
-  color: var(--color-accent-fg);
-  text-decoration: none;
-}
-a[href]:hover {
-  text-decoration: underline;
 }
 
-button,
-[role="button"],
-[type="button"],
-[type="submit"],
-[type="reset"],
-select {
+/* A dead control must not invite a click, so this comes after the pointer rules. */
+.btn:disabled,
+.UnderlineNav-item:disabled,
+.Label--clickable:disabled,
+select:disabled,
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled,
+.form-control:disabled {
+  cursor: not-allowed;
+}
+
+/* The pager marks the current page by disabling it. That is a position marker,
+   not an error, so it gets the plain arrow — the prohibition sign is for controls
+   the user genuinely cannot use. */
+.page-btn:disabled {
   cursor: default;
 }
 
 input:not([type="button"]):not([type="submit"]):not([type="reset"]):not([type="checkbox"]):not([type="radio"]),
 textarea {
   cursor: text;
+}
+
+/* Purely informational: no click to advertise, and no selection worth advertising. */
+.Counter,
+.status-pill,
+.page-gap,
+.blacklist-view-item,
+.Label:not(.Label--clickable) {
+  cursor: default;
+}
+
+/* The modal header is a drag surface and the drag handler only excludes buttons and
+   inputs, so a badge sitting on it really does drag the window. Say so. */
+.Overlay-header .Label {
+  cursor: move;
+}
+
+a[href] {
+  color: var(--color-accent-fg);
+  text-decoration: none;
+}
+a[href]:hover {
+  text-decoration: underline;
 }
 
 /* ============================================================
@@ -170,7 +214,6 @@ textarea {
   background: #ddf4ff;
   color: var(--color-accent-fg);
   white-space: nowrap;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
 
 .status-pill.error {
@@ -210,6 +253,8 @@ textarea {
 .UnderlineNav-item:hover {
   color: var(--color-fg-default);
   border-bottom-color: var(--color-neutral-muted);
+  /* Light fill on hover previews the darker fill the tab gets while pressed. */
+  background: var(--color-canvas-subtle);
 }
 
 .UnderlineNav-item.selected {
@@ -395,6 +440,11 @@ select.form-control {
   box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.3);
 }
 
+/* Hover darkens the border first, so the field reads as editable before you click in. */
+.form-control:hover:not(:focus):not([readonly]) {
+  border-color: #afb8c1;
+}
+
 .form-control[readonly] {
   background: var(--color-canvas-subtle);
   color: var(--color-fg-muted);
@@ -417,6 +467,215 @@ select.form-control {
 .form-hint i {
   flex-shrink: 0;
   margin-top: 1px;
+}
+
+/* ============================================================
+   EXECUTE BLACKLIST
+   ============================================================ */
+.blacklist-section {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas-inset);
+}
+
+.blacklist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.blacklist-head .form-label {
+  margin: 0;
+}
+
+.blacklist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 6px 12px;
+  max-height: 216px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas-default);
+}
+
+.blacklist-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  /* The padding is the hover box; the matching negative margin keeps the text
+     where the grid put it, so the highlight bleeds into the gap instead of shifting rows. */
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  transition: background 80ms ease;
+}
+
+/* The whole row toggles the box, so highlight the whole row, not just the checkbox. */
+.blacklist-rule:hover {
+  background: var(--color-canvas-subtle);
+}
+
+/* Ticked rules stay tinted, so the current selection reads at a glance. */
+.blacklist-rule:has(input:checked) {
+  background: #ddf4ff;
+}
+
+.blacklist-rule:has(input:checked):hover {
+  background: #b6e3ff;
+}
+
+.blacklist-rule input {
+  flex-shrink: 0;
+  margin-top: 2px;
+  accent-color: var(--color-accent-emphasis);
+}
+
+.blacklist-rule code {
+  display: block;
+  margin-top: 1px;
+  color: var(--color-fg-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.blacklist-warning {
+  display: none;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-danger-emphasis);
+  border-radius: var(--radius-sm);
+  background: #ffebe9;
+  color: var(--color-danger-fg);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.blacklist-warning.show {
+  display: flex;
+}
+
+.blacklist-note {
+  grid-column: 1 / -1;
+  color: var(--color-fg-muted);
+  font-size: 12px;
+}
+
+/* The table badge is a button — clicking it opens the full rule list.
+   Form controls bring their own UA sizing (min-height, padding, font, appearance),
+   which inflates the pill, so the box is pinned: it must stay the same 22px badge
+   as the badges in the neighbouring columns. It opens something on click, so it
+   gets the pointer cursor — that is the whole affordance; no caret needed. */
+button.Label--clickable {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 7px;
+  font: 500 12px/20px var(--font-mono);
+  text-align: center;
+  cursor: pointer;
+}
+
+.Label--clickable:focus-visible {
+  outline: 2px solid var(--color-accent-fg);
+  outline-offset: 1px;
+}
+
+/* ---------- Read-only blacklist viewer ---------- */
+.blacklist-view-summary {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.blacklist-view-warn {
+  color: var(--color-danger-fg);
+  font-weight: 600;
+}
+
+.blacklist-view-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-sm);
+  background: var(--color-canvas-default);
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.blacklist-view-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+.blacklist-view-item:last-child {
+  border-bottom: 0;
+}
+
+/* Rules that are not blocked stay listed and greyed: what is NOT fenced in is the
+   part that matters when a datasource is wide open. */
+.blacklist-view-item.is-off {
+  background: var(--color-canvas-subtle);
+  color: var(--color-fg-muted);
+}
+
+.blacklist-view-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 52px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.blacklist-view-item.is-on .blacklist-view-state {
+  color: var(--color-success-fg);
+}
+
+.blacklist-view-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.blacklist-view-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.blacklist-view-main code {
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-fg-muted);
+  background: var(--color-canvas-subtle);
+  border: 1px solid var(--color-border-muted);
+  border-radius: var(--radius-sm);
+}
+
+.blacklist-view-desc {
+  flex-basis: 100%;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-fg-muted);
 }
 
 .hidden {
@@ -484,6 +743,12 @@ select.form-control {
   padding: 3px 6px;
 }
 
+/* A dead button must look dead under the pointer, not clickable. */
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ============================================================
    LABEL / BADGE
    ============================================================ */
@@ -498,7 +763,11 @@ select.form-control {
   border-radius: 2em;
   white-space: nowrap;
   font-family: var(--font-mono);
+  transition: background 80ms ease, border-color 80ms ease;
 }
+
+/* Badges carry tooltips (full profile id, rule list, type). The tooltip shows on
+   its own — a help cursor over every badge just reads as a question mark. */
 
 .Label--secondary {
   color: var(--color-fg-muted);
@@ -510,6 +779,40 @@ select.form-control {
   color: var(--color-accent-fg);
   border-color: #b6d8f8;
   background: #ddf4ff;
+}
+
+.Label--success {
+  color: var(--color-success-fg);
+  border-color: #bef0c6;
+  background: #dafbe1;
+}
+
+.Label--danger {
+  color: var(--color-danger-fg);
+  border-color: #ffd0cc;
+  background: #ffebe9;
+}
+
+/* Hover deepens the same hue the badge already uses — enough to show the badge
+   is the thing under the pointer, without introducing a new colour. */
+.Label--secondary:hover {
+  border-color: #afb8c1;
+  background: var(--color-neutral-muted);
+}
+
+.Label--accent:hover {
+  border-color: #79b8ff;
+  background: #b6e3ff;
+}
+
+.Label--success:hover {
+  border-color: #7ee2a1;
+  background: #b0e8c3;
+}
+
+.Label--danger:hover {
+  border-color: #ff8a80;
+  background: #ffd8d5;
 }
 
 /* ============================================================
@@ -527,7 +830,10 @@ select.form-control {
   table-layout: fixed;
 }
 
-/* Column widths so rows never overflow horizontally */
+/* Column widths so rows never overflow horizontally.
+   table-layout:fixed + overflow:hidden wrapper: the widths of ALL columns
+   (the Actions column included) must add up to 100%, otherwise the table
+   grows past the wrapper and the trailing columns get clipped. */
 #panel-base .data-table th:nth-child(1) { width: 14%; }
 #panel-base .data-table th:nth-child(2) { width: 8%; }
 #panel-base .data-table th:nth-child(3) { width: 12%; }
@@ -536,12 +842,14 @@ select.form-control {
 #panel-base .data-table th:nth-child(6) { width: 34%; }
 #panel-base .data-table th:nth-child(7) { width: 12%; }
 
-#panel-datasource .data-table th:nth-child(1) { width: 15%; }
-#panel-datasource .data-table th:nth-child(2) { width: 12%; }
-#panel-datasource .data-table th:nth-child(3) { width: 13%; }
-#panel-datasource .data-table th:nth-child(4) { width: 12%; }
-#panel-datasource .data-table th:nth-child(5) { width: 36%; }
-#panel-datasource .data-table th:nth-child(6) { width: 12%; }
+#panel-datasource .data-table th:nth-child(1) { width: 13%; }
+#panel-datasource .data-table th:nth-child(2) { width: 11%; }
+#panel-datasource .data-table th:nth-child(3) { width: 10%; }
+#panel-datasource .data-table th:nth-child(4) { width: 9%; }
+#panel-datasource .data-table th:nth-child(5) { width: 29%; }
+#panel-datasource .data-table th:nth-child(6) { width: 10%; }
+/* Three icon buttons (test / edit / delete) need more room than the base panel's two. */
+#panel-datasource .data-table th:nth-child(7) { width: 18%; }
 
 .data-table th {
   padding: 8px 16px;
@@ -572,12 +880,39 @@ select.form-control {
   text-overflow: ellipsis;
 }
 
+/* Values are cut with an ellipsis. When a cell really is cut, advertise it —
+   a text cursor (the value is there to be selected and copied) plus a dotted
+   underline — so the tooltip is something you seek out. */
+.data-table td.is-clipped {
+  cursor: text;
+}
+
+.data-table td.is-clipped:hover {
+  color: var(--color-fg-default);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--color-fg-muted);
+  text-underline-offset: 3px;
+}
+
 .data-table tbody tr {
   transition: background 80ms ease;
 }
 
 .data-table tbody tr:hover {
-  background: var(--color-canvas-subtle);
+  background: #eef1f5;
+}
+
+/* Accent bar on the hovered row's leading edge: with the action buttons far to
+   the right, it makes clear which row they belong to. */
+.data-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 var(--color-accent-emphasis);
+}
+
+/* Action icons stay muted until the row is hovered, then they are ready to click.
+   :not(:hover) keeps this from outranking each icon's own hover colour. */
+.data-table tbody tr:hover .row-actions .btn-icon:not(:hover) {
+  color: var(--color-fg-default);
 }
 
 .data-table tr:last-child td {
@@ -679,6 +1014,7 @@ select.form-control {
 
 .page-size-select:hover {
   background-color: var(--color-canvas-inset);
+  border-color: #afb8c1;
 }
 
 .page-size-select:focus {
@@ -773,6 +1109,11 @@ select.form-control {
 
 .search-input-wrap .form-control {
   padding-left: 36px;
+}
+
+/* The magnifier answers the pointer, so the field feels like one control. */
+.search-input-wrap:hover > i {
+  color: var(--color-fg-default);
 }
 
 /* ============================================================

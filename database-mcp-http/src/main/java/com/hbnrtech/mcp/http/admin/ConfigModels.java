@@ -2,6 +2,7 @@ package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.config.DatasourceConfig;
+import com.hbnrtech.mcp.execution.ExecuteBlacklistRules;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -41,12 +42,18 @@ public final class ConfigModels {
       }
    }
 
+   /**
+    * @param executeBlacklist the {@code db_execute} rule ids this datasource refuses. {@code null}
+    *                         means the row predates the configurable blacklist and the dialect
+    *                         defaults apply; an empty list means the datasource blocks nothing.
+    */
    public record StoredDatasource(
       String id,
       String baseConfigId,
       String username,
       String password,
-      String schema
+      String schema,
+      List<String> executeBlacklist
    ) {
       public DatasourceConfig toDatasourceConfig(StoredBaseJdbcConfig baseConfig) {
          return new DatasourceConfig(
@@ -55,7 +62,8 @@ public final class ConfigModels {
             baseConfig.jdbcUrl(this.schema),
             this.username(),
             this.password(),
-            this.schema
+            this.schema,
+            this.executeBlacklist
          );
       }
    }
@@ -96,7 +104,26 @@ public final class ConfigModels {
       String baseConfigId,
       String username,
       String password,
-      String schema
+      String schema,
+      List<String> executeBlacklist
+   ) {
+   }
+
+   /** One checkbox in the admin console. */
+   public record BlacklistRuleView(
+      String id,
+      String phrase,
+      String label,
+      String description,
+      boolean defaultEnabled
+   ) {
+   }
+
+   /** The rule catalog for one database type, plus which rules are on by default. */
+   public record BlacklistCatalog(
+      String type,
+      List<BlacklistRuleView> rules,
+      List<String> defaultRuleIds
    ) {
    }
 
@@ -118,6 +145,14 @@ public final class ConfigModels {
       String currentPassword,
       String newPassword
    ) {
+   }
+
+   public static BlacklistCatalog blacklistCatalog(DatabaseType type) {
+      List<String> defaultRuleIds = ExecuteBlacklistRules.defaultRuleIds(type);
+      List<BlacklistRuleView> rules = ExecuteBlacklistRules.forType(type).stream()
+         .map(rule -> new BlacklistRuleView(rule.id(), rule.phrase(), rule.label(), rule.description(), defaultRuleIds.contains(rule.id())))
+         .toList();
+      return new BlacklistCatalog(type.name().toLowerCase(), rules, defaultRuleIds);
    }
 
    private static String buildJdbcSuffix(String jdbcParams, String schemaParamName, String schema) {

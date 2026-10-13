@@ -1,6 +1,7 @@
 package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.http.admin.ConfigModels.BaseJdbcConfigPayload;
+import com.hbnrtech.mcp.http.admin.ConfigModels.BlacklistCatalog;
 import com.hbnrtech.mcp.http.admin.ConfigModels.ChangePasswordPayload;
 import com.hbnrtech.mcp.http.admin.ConfigModels.DatasourcePayload;
 import com.hbnrtech.mcp.http.admin.ConfigModels.RuntimeSnapshot;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -43,6 +45,11 @@ public class AdminConfigController {
    @DeleteMapping("/base-configs/{baseConfigId}")
    public RuntimeSnapshot deleteBaseConfig(@PathVariable("baseConfigId") String baseConfigId) {
       return this.runtimeConfigurationService.deleteBaseConfig(baseConfigId);
+   }
+
+   @GetMapping("/blacklist-rules")
+   public BlacklistCatalog blacklistRules(@RequestParam("type") String type) {
+      return this.runtimeConfigurationService.blacklistCatalog(type);
    }
 
    @PutMapping("/datasources/{datasourceId}")

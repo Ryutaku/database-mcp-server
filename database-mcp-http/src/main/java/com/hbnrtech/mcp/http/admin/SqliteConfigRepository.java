@@ -1,19 +1,25 @@
 package com.hbnrtech.mcp.http.admin;
 
 import com.hbnrtech.mcp.config.DatabaseType;
+import com.hbnrtech.mcp.execution.ExecuteBlacklistRules;
 import com.hbnrtech.mcp.http.admin.ConfigModels.RuntimeSnapshot;
 import com.hbnrtech.mcp.http.admin.ConfigModels.StoredAdminCredential;
 import com.hbnrtech.mcp.http.admin.ConfigModels.StoredBaseJdbcConfig;
 import com.hbnrtech.mcp.http.admin.ConfigModels.StoredDatasource;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 @Repository
 public class SqliteConfigRepository {
+   private static final Logger LOGGER = LoggerFactory.getLogger(SqliteConfigRepository.class);
+
    private final JdbcTemplate jdbcTemplate;
 
    public SqliteConfigRepository(JdbcTemplate configStoreJdbcTemplate) {
@@ -41,7 +47,7 @@ public class SqliteConfigRepository {
 
       List<StoredDatasource> datasources = this.jdbcTemplate.query(
          """
-         select id, base_config_id, username, password, schema_name
+         select id, base_config_id, username, password, schema_name, execute_blacklist
          from mcp_datasource
          order by id
          """,
@@ -50,7 +56,8 @@ public class SqliteConfigRepository {
             rs.getString("base_config_id"),
             rs.getString("username"),
             rs.getString("password"),
-            rs.getString("schema_name")
+            rs.getString("schema_name"),
+            parseRuleIds(rs.getString("execute_blacklist"))
          )
       );
 
@@ -128,19 +135,21 @@ public class SqliteConfigRepository {
    public void upsertDatasource(StoredDatasource datasource) {
       this.jdbcTemplate.update(
          """
-         insert into mcp_datasource(id, base_config_id, username, password, schema_name)
-         values (?, ?, ?, ?, ?)
+         insert into mcp_datasource(id, base_config_id, username, password, schema_name, execute_blacklist)
+         values (?, ?, ?, ?, ?, ?)
          on conflict(id) do update set
            base_config_id = excluded.base_config_id,
            username = excluded.username,
            password = excluded.password,
-           schema_name = excluded.schema_name
+           schema_name = excluded.schema_name,
+           execute_blacklist = excluded.execute_blacklist
          """,
          datasource.id(),
          datasource.baseConfigId(),
          datasource.username(),
          datasource.password(),
-         datasource.schema()
+         datasource.schema(),
+         joinRuleIds(datasource.executeBlacklist())
       );
    }
 
@@ -181,6 +190,7 @@ public class SqliteConfigRepository {
            username text not null,
            password text not null,
            schema_name text,
+           execute_blacklist text,
            foreign key (base_config_id) references mcp_base_jdbc_config(id) on delete cascade
          )
          """
@@ -196,6 +206,38 @@ public class SqliteConfigRepository {
          )
          """
       );
+      this.migrateExecuteBlacklist();
+   }
+
+   /**
+    * Adds the blacklist column to databases created before it existed, then gives every datasource
+    * that has no value the default rules for its database type. Datasources keep refusing exactly
+    * what they refused before; the column only makes the existing behaviour visible and editable.
+    */
+   private void migrateExecuteBlacklist() {
+      if (!this.tableExists("mcp_datasource")) {
+         return;
+      }
+
+      if (!this.tableColumns("mcp_datasource").contains("execute_blacklist")) {
+         this.jdbcTemplate.execute("alter table mcp_datasource add column execute_blacklist text");
+         LOGGER.info("Added mcp_datasource.execute_blacklist to the config store");
+      }
+
+      List<BlacklistBackfillRow> rows = this.jdbcTemplate.query(
+         """
+         select d.id, b.type
+         from mcp_datasource d
+         join mcp_base_jdbc_config b on b.id = d.base_config_id
+         where d.execute_blacklist is null
+         """,
+         (rs, rowNum) -> new BlacklistBackfillRow(rs.getString("id"), rs.getString("type"))
+      );
+      for (BlacklistBackfillRow row : rows) {
+         String ruleIds = joinRuleIds(ExecuteBlacklistRules.defaultRuleIds(DatabaseType.from(row.type())));
+         this.jdbcTemplate.update("update mcp_datasource set execute_blacklist = ? where id = ?", ruleIds, row.id());
+         LOGGER.info("Seeded the default execute blacklist for datasource '{}': {}", row.id(), ruleIds);
+      }
    }
 
    private void migrateLegacySchemaIfRequired() {
@@ -231,5 +273,31 @@ public class SqliteConfigRepository {
             (rs, rowNum) -> rs.getString("name")
          )
       );
+   }
+
+   /**
+    * Stored as a comma separated list of rule ids. A SQL {@code null} is kept as {@code null} so the
+    * caller can tell "never configured" from "configured to block nothing" (an empty string).
+    */
+   private static List<String> parseRuleIds(String raw) {
+      if (raw == null) {
+         return null;
+      }
+
+      List<String> ruleIds = new ArrayList<>();
+      for (String token : raw.split(",")) {
+         String trimmed = token.trim();
+         if (!trimmed.isEmpty()) {
+            ruleIds.add(trimmed);
+         }
+      }
+      return ruleIds;
+   }
+
+   private static String joinRuleIds(List<String> ruleIds) {
+      return ruleIds == null ? null : String.join(",", ruleIds);
+   }
+
+   private record BlacklistBackfillRow(String id, String type) {
    }
 }

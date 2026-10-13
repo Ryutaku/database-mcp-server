@@ -5,6 +5,7 @@ import com.hbnrtech.mcp.config.DatabaseType;
 import com.hbnrtech.mcp.config.DatasourceConfig;
 import com.hbnrtech.mcp.execution.DatasourceContext;
 import com.hbnrtech.mcp.execution.DatasourceRegistry;
+import com.hbnrtech.mcp.execution.ExecuteBlacklistRules;
 import com.hbnrtech.mcp.http.admin.ConfigModels.*;
 import com.hbnrtech.mcp.http.config.DatabaseMcpHttpProperties;
 import org.slf4j.Logger;
@@ -13,8 +14,11 @@ import org.springframework.stereotype.Service;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class RuntimeConfigurationService {
@@ -74,19 +78,53 @@ public class RuntimeConfigurationService {
       validateId(datasourceId, "datasourceId");
       validateId(payload.baseConfigId(), "baseConfigId");
       requireNonBlank(payload.username(), "username");
-      if (this.currentSnapshot().baseConfigs().stream().noneMatch(item -> item.id().equals(payload.baseConfigId()))) {
-         throw new IllegalArgumentException("Unknown baseConfigId: " + payload.baseConfigId());
-      }
+      StoredBaseJdbcConfig baseConfig = this.currentSnapshot().baseConfigs().stream()
+         .filter(item -> item.id().equals(payload.baseConfigId()))
+         .findFirst()
+         .orElseThrow(() -> new IllegalArgumentException("Unknown baseConfigId: " + payload.baseConfigId()));
+
       this.repository.upsertDatasource(
          new StoredDatasource(
             datasourceId,
             payload.baseConfigId(),
             payload.username(),
             payload.password() == null ? "" : payload.password(),
-            blankToNull(payload.schema())
+            blankToNull(payload.schema()),
+            resolveBlacklistRuleIds(baseConfig.type(), payload.executeBlacklist())
          )
       );
       return this.reload();
+   }
+
+   public BlacklistCatalog blacklistCatalog(String type) {
+      return ConfigModels.blacklistCatalog(DatabaseType.from(type));
+   }
+
+   /**
+    * A payload without a blacklist means the caller does not manage that field, not "block nothing",
+    * so it keeps the dialect defaults. Unknown rule ids are rejected instead of dropped: quietly
+    * losing a rule the operator asked for would silently widen what the server can execute.
+    */
+   private static List<String> resolveBlacklistRuleIds(DatabaseType type, List<String> requestedRuleIds) {
+      if (requestedRuleIds == null) {
+         return ExecuteBlacklistRules.defaultRuleIds(type);
+      }
+
+      Set<String> knownRuleIds = ExecuteBlacklistRules.knownRuleIds(type);
+      List<String> ruleIds = new ArrayList<>();
+      for (String requestedRuleId : requestedRuleIds) {
+         String ruleId = requestedRuleId == null ? "" : requestedRuleId.trim();
+         if (ruleId.isEmpty()) {
+            continue;
+         }
+         if (!knownRuleIds.contains(ruleId)) {
+            throw new IllegalArgumentException("Unknown execute blacklist rule for " + type + ": " + ruleId);
+         }
+         if (!ruleIds.contains(ruleId)) {
+            ruleIds.add(ruleId);
+         }
+      }
+      return ruleIds;
    }
 
    public synchronized RuntimeSnapshot deleteDatasource(String datasourceId) {
