@@ -1309,10 +1309,22 @@ button.Label--clickable {
 }
 
 .usage-card-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--color-fg-muted);
   font-size: 11px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.usage-card-label .bi {
+  font-size: 12px;
+}
+
+/* The failure count is the one card worth colouring: it is the number a reader scans for. */
+.usage-card-label .usage-icon-bad {
+  color: var(--color-danger-fg);
 }
 
 .usage-card-value {
