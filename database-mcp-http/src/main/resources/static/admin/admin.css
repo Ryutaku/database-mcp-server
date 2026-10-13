@@ -330,6 +330,25 @@ a[href]:hover {
   flex: 0 0 auto;
 }
 
+/* The hotspot panel is a report: four stacked blocks whose height comes from their content.
+   The contract above only fits operational panels built from a filter header plus one table —
+   the shell is locked to 100vh and only the last Box's table area may scroll. Four blocks
+   overflow that, and .app-shell clips them with overflow:hidden, so every block below the
+   fold is neither visible nor reachable. This panel scrolls itself instead. */
+#panel-usage.active {
+  overflow-y: auto;
+}
+
+/* Blocks keep their content height; nothing here gets squeezed to fit the viewport. */
+#panel-usage.active > .Box {
+  flex: 0 0 auto;
+}
+
+#panel-usage.active > .Box:last-child .data-table-wrap {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 /* ============================================================
    BOX
    ============================================================ */
