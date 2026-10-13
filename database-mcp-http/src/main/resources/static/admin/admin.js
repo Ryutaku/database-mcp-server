@@ -85,6 +85,8 @@
   var usageFilterOutcome    = $id("usageFilterOutcome");
   var usagePagerEl          = $id("usagePager");
   var usagePageInfo         = $id("usagePageInfo");
+  var usageDsMore           = $id("usageDsMore");
+  var usageToolMore         = $id("usageToolMore");
 
   /* =========================  STATE  ========================= */
   var currentBaseConfigs = [];
@@ -104,6 +106,13 @@
   /* The hotspot panel is fetched on first view; its detail list is paged by the server. */
   var usageLoaded = false;
   var usagePage = 1;
+
+  /* A ranking over every datasource is a wall of rows that pushes the tool ranking off screen,
+     so each ranking shows its head and the tail sits behind an explicit expand. */
+  var usageRankLimit = 20;
+  var usageDsExpanded = false;
+  var usageToolExpanded = false;
+  var usageRankings = null;
 
   /* =========================================================
      EVENT BINDINGS
@@ -141,6 +150,17 @@
     bind(id, "change", function () {
       if (id === "usagePageSize") usagePage = 1;
       loadUsageRecords();
+    });
+  });
+  [usageDsMore, usageToolMore].forEach(function (container) {
+    if (!container) return;
+    container.addEventListener("click", function (e) {
+      var button = e.target.closest("button[data-rank]");
+      if (!button) return;
+      var kind = button.dataset.rank;
+      if (kind === "datasource") usageDsExpanded = !usageDsExpanded;
+      else usageToolExpanded = !usageToolExpanded;
+      renderUsageRanking(kind);
     });
   });
 
@@ -873,15 +893,46 @@
   }
 
   function renderUsageRankings(summary) {
-    renderUsageRankTable(usageDsTableBody, summary.datasources, "datasourceId", "该窗口内没有数据源调用记录。", true);
-    renderUsageRankTable(usageToolTableBody, summary.tools, "toolName", "该窗口内没有工具调用记录。", false);
+    usageRankings = summary;
+    renderUsageRanking("datasource");
+    renderUsageRanking("tool");
+  }
+
+  /** One ranking: its head by default, the tail only after the reader asks for it. */
+  function renderUsageRanking(kind) {
+    var isDatasource = kind === "datasource";
+    var summary = usageRankings || {};
+    var items = (isDatasource ? summary.datasources : summary.tools) || [];
+    var expanded = isDatasource ? usageDsExpanded : usageToolExpanded;
+    var more = isDatasource ? usageDsMore : usageToolMore;
+
+    renderUsageRankTable(
+      isDatasource ? usageDsTableBody : usageToolTableBody,
+      expanded ? items : items.slice(0, usageRankLimit),
+      isDatasource ? "datasourceId" : "toolName",
+      isDatasource ? "该窗口内没有数据源调用记录。" : "该窗口内没有工具调用记录。",
+      isDatasource,
+      summary.totalCalls
+    );
+
+    if (!more) return;
+    if (items.length <= usageRankLimit) {
+      more.innerHTML = "";
+      return;
+    }
+    more.innerHTML = '<button class="btn btn-default btn-sm" type="button" data-rank="' + kind + '">' +
+      (expanded
+        ? "只看前 " + usageRankLimit + " 名"
+        : "展开全部 " + fmtNum(items.length) + " 名（当前显示前 " + usageRankLimit + "）") +
+      "</button>";
   }
 
   /**
    * The bar is scaled to the top of the ranking, not to 100%, so the second place still reads as a
-   * bar next to the first; the number beside it is the true share of all calls in the window.
+   * bar next to the first; the number beside it is the true share of all calls in the window, which
+   * is why the window total is passed in rather than summed from the visible rows.
    */
-  function renderUsageRankTable(tbody, items, nameField, emptyMsg, withLastSeen) {
+  function renderUsageRankTable(tbody, items, nameField, emptyMsg, withLastSeen, totalCalls) {
     if (!tbody) return;
     var list = items || [];
     tbody.innerHTML = "";
@@ -890,7 +941,7 @@
       return;
     }
 
-    var total = list.reduce(function (sum, item) { return sum + (Number(item.callCount) || 0); }, 0);
+    var total = Number(totalCalls) || list.reduce(function (sum, item) { return sum + (Number(item.callCount) || 0); }, 0);
     var top = list.reduce(function (max, item) { return Math.max(max, Number(item.callCount) || 0); }, 0);
 
     list.forEach(function (item) {

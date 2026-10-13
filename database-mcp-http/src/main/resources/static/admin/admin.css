@@ -1345,6 +1345,19 @@ button.Label--clickable {
   font-family: var(--font-mono);
 }
 
+/* The expand control sits under the ranking rather than inside the table, so it stays where the
+   reader already is. :empty keeps it from leaving a stray border when there is nothing to expand. */
+.usage-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--color-border-muted);
+}
+
+.usage-more:empty {
+  display: none;
+}
+
 /* ============================================================
    RESPONSIVE
    ============================================================ */
