@@ -4,11 +4,23 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.hbnrtech.mcp.config.DatabaseType;
+import com.hbnrtech.mcp.config.DatasourceConfig;
+import com.hbnrtech.mcp.dialect.mysql.MySqlDialect;
+import com.hbnrtech.mcp.dialect.oracle.OracleDialect;
+import com.hbnrtech.mcp.execution.ConnectionManager;
+import com.hbnrtech.mcp.execution.DatasourceContext;
 import com.hbnrtech.mcp.execution.DatasourceRegistry;
 import com.hbnrtech.mcp.execution.JdbcExecutor;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.lang.reflect.Method;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -84,6 +96,68 @@ class GenericMcpToolsTest {
          name\ttype\tnull\tdefault\tcomment
          ID\tNUMBER(18)\tNN\t\tIdentifier
          NAME\tVARCHAR2(80)\t\t'anonymous'\tDisplay name""", result);
+   }
+
+   @Test
+   void runsSchemaCompareForOracleDialect() throws SQLException {
+      ConnectionManager connectionManager = mock(ConnectionManager.class);
+      when(connectionManager.getConnection(any())).thenThrow(new SQLException("no database reachable"));
+      GenericMcpTools tools = new GenericMcpTools(
+         new DatasourceRegistry(Map.of("ora", datasourceContext(DatabaseType.ORACLE, new OracleDialect(), connectionManager))),
+         mock(JdbcExecutor.class)
+      );
+
+      String message = callCompareSchemas(tools, Map.of("datasourceId", "ora", "sourceSchema", "SRC", "targetSchema", "APP"));
+
+      assertTrue(message.contains("Schema compare failed"));
+      assertFalse(message.contains("not implemented"));
+   }
+
+   @Test
+   void rejectsOracleCompareWhenBothNamesResolveToTheSameOwner() throws SQLException {
+      ConnectionManager connectionManager = mock(ConnectionManager.class);
+      GenericMcpTools tools = new GenericMcpTools(
+         new DatasourceRegistry(Map.of("ora", datasourceContext(DatabaseType.ORACLE, new OracleDialect(), connectionManager))),
+         mock(JdbcExecutor.class)
+      );
+
+      String message = callCompareSchemas(tools, Map.of("datasourceId", "ora", "sourceSchema", "app", "targetSchema", "APP"));
+
+      assertTrue(message.contains("must be different"));
+      verify(connectionManager, never()).getConnection(any());
+   }
+
+   @Test
+   void keepsSchemaCompareUnsupportedForDialectsWithoutTheCapability() throws SQLException {
+      ConnectionManager connectionManager = mock(ConnectionManager.class);
+      GenericMcpTools tools = new GenericMcpTools(
+         new DatasourceRegistry(Map.of("my", datasourceContext(DatabaseType.MYSQL, new MySqlDialect(), connectionManager))),
+         mock(JdbcExecutor.class)
+      );
+
+      String message = callCompareSchemas(tools, Map.of("datasourceId", "my", "sourceSchema", "src", "targetSchema", "app"));
+
+      assertTrue(message.contains("not implemented"));
+      verify(connectionManager, never()).getConnection(any());
+   }
+
+   private static DatasourceContext datasourceContext(DatabaseType type, com.hbnrtech.mcp.dialect.DatabaseDialect dialect, ConnectionManager connectionManager) {
+      return new DatasourceContext(
+         new DatasourceConfig("ds", type, "jdbc:" + type.name().toLowerCase() + "://127.0.0.1:1/scratch", "app", "secret", "APP", null),
+         dialect,
+         connectionManager
+      );
+   }
+
+   private static String callCompareSchemas(GenericMcpTools tools, Map<String, Object> args) {
+      McpSchema.CallToolResult result = findTool(tools, "db_compare_schemas").handler().apply(null, args);
+      StringBuilder text = new StringBuilder();
+      for (McpSchema.Content content : result.content()) {
+         if (content instanceof McpSchema.TextContent textContent) {
+            text.append(textContent.text());
+         }
+      }
+      return text.toString();
    }
 
    private static RegisteredTool findTool(GenericMcpTools tools, String name) {

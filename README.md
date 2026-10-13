@@ -147,6 +147,39 @@ HTTP 服务会把所有基础配置和数据源映射持久化到 SQLite。
 2. 配置库首次创建为空。
 3. 管理后台修改完成后，会刷新内存中的数据源路由。
 
+### 5.2 执行黑名单（db_execute）
+
+`db_execute` 在真正执行前会按数据源检查一份语句黑名单，命中即拒绝，返回 `Blocked dangerous operation: <语句>`。
+
+规则清单由服务端按数据库类型固定提供（`ExecuteBlacklistRules`），数据源只保存勾选的规则 id。页面上是勾选框，不能自定义正则，避免写出语法错误或灾难回溯的规则。
+
+各类型的默认规则，与黑名单可配置之前的拦截范围完全一致：
+
+| 类型 | 默认拦截 |
+| --- | --- |
+| PostgreSQL | `DROP DATABASE` `DROP SCHEMA` `DROP USER` `DROP ROLE` `DROP TABLESPACE` `ALTER SYSTEM` |
+| Oracle | `DROP DATABASE` `DROP USER` `DROP TABLESPACE` `ALTER SYSTEM` |
+| MySQL | `DROP DATABASE` `DROP SCHEMA` `DROP USER` `RESET MASTER` `RESET REPLICA` `SHUTDOWN` |
+
+默认清单不拦截 `DROP TABLE`、`TRUNCATE TABLE`、`DELETE`。这三条在清单里作为可勾选项提供，需要时手动开启。
+
+语义：
+
+- 匹配前语句会去掉注释、压缩空白并转大写，`DROP  TABLE` 与 `DROP\nTABLE` 等价
+- 清空黑名单表示该数据源不拦截任何语句，管理后台保存时会二次确认
+- 只作用于 `db_execute` 和内部走 DDL 通道的工具，`db_query` 的只读校验不受影响
+
+存储：
+
+- 列 `mcp_datasource.execute_blacklist`，逗号分隔的规则 id
+- 启动时自动加列，并把已有数据源回填为其类型的默认规则，已有行为不变
+- 空字符串表示不拦截任何语句；`NULL` 表示未配置，沿用 dialect 默认。stdio 与环境变量模式始终是 `NULL`，即使用 dialect 内置默认
+
+相关接口：
+
+- `GET /admin/api/blacklist-rules?type=oracle`：返回该类型的规则清单与默认勾选项
+- `PUT /admin/api/datasources/{id}`：`executeBlacklist` 字段接收规则 id 数组，未知 id 直接报 400，不会静默丢弃
+
 ## 6. HTTP 配置示例
 
 主配置文件：
@@ -199,6 +232,7 @@ database-mcp:
 
 - 维护基础 JDBC 配置
 - 维护数据源配置
+- 勾选每个数据源 `db_execute` 的拦截规则（见 5.2）
 - 查看和修改运行时路由数据
 
 相关后端文件：
@@ -243,7 +277,7 @@ Base64Url(HMAC_SHA256(secret, clientId.timestamp.nonce))
 核心工具名以 `db_` 开头，例如：
 
 - `db_query`
-- `db_execute`
+- `db_execute`（受数据源执行黑名单约束，见 5.2）
 - `db_list_schemas`
 - `db_list_tables`
 - `db_describe_table`
@@ -315,11 +349,13 @@ Base64Url(HMAC_SHA256(secret, clientId.timestamp.nonce))
 当前实现里：
 
 - `db_get_ddl` 支持 PostgreSQL / Oracle / MySQL
-- `db_compare_schemas` 仅对 PostgreSQL 实现
+- `db_compare_schemas` 支持 PostgreSQL 和 Oracle，MySQL 未实现
 - 部分索引分析能力依赖具体方言支持
 - Oracle、PostgreSQL 和 MySQL 在 schema、标识符大小写、元数据查询 SQL 上存在差异
 
 如果某个方言暂不支持某项能力，工具会返回明确错误信息，而不是静默降级。
+
+Oracle 的 schema 对比按 Oracle 语义解析：`sourceSchema` 和 `targetSchema` 先按大写解析成 `owner`，两个名字解析到同一个 owner 时直接拒绝，避免对同一个 schema 生成自毁脚本。对比范围覆盖表、列、索引、约束、视图、序列；独立函数和过程只比较存在性，不比较包体和触发器，这类差异以 `review manually` 注释输出。生成的同步脚本需要人工复核后再执行。
 
 ## 11. 关键源码位置
 

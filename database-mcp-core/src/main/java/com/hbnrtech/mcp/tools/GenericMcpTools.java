@@ -424,7 +424,7 @@ public class GenericMcpTools {
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> executeHandler() {
       return this.withDatasource((exchange, args, context) -> {
          String sql = (String) args.get("sql");
-         Optional<String> validation = context.dialect().safetyPolicy().validateExecute(sql);
+         Optional<String> validation = context.safetyPolicy().validateExecute(sql);
          return validation.map(ToolResults::error).orElseGet(() -> this.executeSql(context, this.activeSchema(exchange, args, context), sql));
       });
    }
@@ -440,7 +440,7 @@ public class GenericMcpTools {
    private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> compareSchemasHandler() {
       return this.withDatasource((exchange, args, context) -> {
          DatabaseDialect dialect = context.dialect();
-         if (!dialect.capabilities().compareSchemas() || dialect.type() != DatabaseType.POSTGRES) {
+         if (!dialect.capabilities().compareSchemas()) {
             return ToolResults.error("Schema compare is not implemented for " + dialect.type());
          }
 
@@ -449,7 +449,7 @@ public class GenericMcpTools {
          if (sourceSchema == null || sourceSchema.isBlank() || targetSchema == null || targetSchema.isBlank()) {
             return ToolResults.error("Both sourceSchema and targetSchema are required");
          }
-         if (sourceSchema.equals(targetSchema)) {
+         if (this.normalizeIdentifierValue(dialect, sourceSchema).equals(this.normalizeIdentifierValue(dialect, targetSchema))) {
             return ToolResults.error("sourceSchema and targetSchema must be different");
          }
 
@@ -532,7 +532,7 @@ public class GenericMcpTools {
    }
 
    private McpSchema.CallToolResult executeDdl(DatasourceContext context, String activeSchema, String sql, String successMessage) {
-      Optional<String> validation = context.dialect().safetyPolicy().validateExecute(sql);
+      Optional<String> validation = context.safetyPolicy().validateExecute(sql);
       if (validation.isPresent()) {
          return ToolResults.error(validation.get());
       }
@@ -582,7 +582,7 @@ public class GenericMcpTools {
       if (value == null) {
          return null;
       }
-      return dialect.type() == DatabaseType.ORACLE ? value.toUpperCase() : value;
+      return dialect.type() == DatabaseType.ORACLE ? value.toUpperCase(java.util.Locale.ROOT) : value;
    }
 
    private String formatTableList(List<Map<String, Object>> rows) {
