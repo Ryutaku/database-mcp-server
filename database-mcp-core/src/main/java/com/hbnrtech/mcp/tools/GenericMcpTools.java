@@ -17,6 +17,9 @@ import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,17 +36,26 @@ public class GenericMcpTools {
    private static final Pattern CREATE_TABLE_PATTERN = Pattern.compile("(?is)^CREATE\\s+TABLE\\s+(.+?)\\s*\\(\\s*\\n(.*?)\\n\\)");
    private static final Pattern COMMENT_TABLE_PATTERN = Pattern.compile("(?is)COMMENT\\s+ON\\s+TABLE\\s+(.+?)\\s+IS\\s+'((?:''|[^'])*)'");
    private static final Pattern COMMENT_COLUMN_PATTERN = Pattern.compile("(?is)COMMENT\\s+ON\\s+COLUMN\\s+(.+?)\\.\"((?:\"\"|[^\"])*)\"\\s+IS\\s+'((?:''|[^'])*)'");
+   /** Fixed width on purpose: the store compares these as strings, so a variable precision would sort the same second wrongly. */
+   private static final DateTimeFormatter INVOCATION_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(ZoneOffset.UTC);
+   private static final int MAX_RECORDED_ERROR_LENGTH = 500;
 
    private final DatasourceRegistry datasourceRegistry;
    private final JdbcExecutor executor;
    private final SchemaDiffEngine schemaDiffEngine;
    private final ConcurrentMap<String, String> activeSchemas;
+   private final ToolInvocationListener invocationListener;
 
    public GenericMcpTools(DatasourceRegistry datasourceRegistry, JdbcExecutor executor) {
+      this(datasourceRegistry, executor, ToolInvocationListener.NOOP);
+   }
+
+   public GenericMcpTools(DatasourceRegistry datasourceRegistry, JdbcExecutor executor, ToolInvocationListener invocationListener) {
       this.datasourceRegistry = datasourceRegistry;
       this.executor = executor;
       this.schemaDiffEngine = new SchemaDiffEngine();
       this.activeSchemas = new ConcurrentHashMap<>();
+      this.invocationListener = invocationListener == null ? ToolInvocationListener.NOOP : invocationListener;
    }
 
    public List<RegisteredTool> getRegisteredTools() {
@@ -200,7 +212,85 @@ public class GenericMcpTools {
          }
          """), this.compareSchemasHandler()));
       tools.addAll(this.aliasTools(tools));
-      return tools;
+      return this.withInvocationRecording(tools);
+   }
+
+   /**
+    * Wraps every handler so one call is counted once, whatever the outcome. The tool name comes from
+    * the registered contract and the datasource from the arguments, so the alias tools are counted
+    * under their own names and a call that fails on an unknown datasourceId is still a call.
+    */
+   private List<RegisteredTool> withInvocationRecording(List<RegisteredTool> tools) {
+      if (this.invocationListener == ToolInvocationListener.NOOP) {
+         return tools;
+      }
+      return tools.stream()
+         .map(registeredTool -> new RegisteredTool(registeredTool.tool(), this.recordInvocations(registeredTool.tool().name(), registeredTool.handler())))
+         .toList();
+   }
+
+   private BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> recordInvocations(
+      String toolName,
+      BiFunction<McpSyncServerExchange, Map<String, Object>, McpSchema.CallToolResult> handler
+   ) {
+      return (exchange, args) -> {
+         Instant startedAt = Instant.now();
+         long startedNanos = System.nanoTime();
+         String datasourceId = recordedDatasourceId(args);
+         String sessionId = exchange == null ? null : exchange.sessionId();
+         try {
+            McpSchema.CallToolResult result = handler.apply(exchange, args);
+            boolean failed = Boolean.TRUE.equals(result.isError());
+            this.invocationListener.record(new ToolInvocation(
+               datasourceId,
+               toolName,
+               !failed,
+               (System.nanoTime() - startedNanos) / 1_000_000L,
+               failed ? recordedError(result) : null,
+               sessionId,
+               INVOCATION_TIMESTAMP.format(startedAt)
+            ));
+            return result;
+         } catch (RuntimeException ex) {
+            this.invocationListener.record(new ToolInvocation(
+               datasourceId,
+               toolName,
+               false,
+               (System.nanoTime() - startedNanos) / 1_000_000L,
+               truncate(ex.getClass().getSimpleName() + ": " + ex.getMessage()),
+               sessionId,
+               INVOCATION_TIMESTAMP.format(startedAt)
+            ));
+            throw ex;
+         }
+      };
+   }
+
+   /**
+    * Read straight from the arguments instead of the resolved context: a call naming a datasource the
+    * server does not know is exactly the kind of call the ranking should not hide.
+    */
+   private static String recordedDatasourceId(Map<String, Object> args) {
+      Object datasourceId = args.get("datasourceId");
+      return datasourceId instanceof String value && !value.isBlank() ? value : ToolInvocation.UNKNOWN_DATASOURCE;
+   }
+
+   private static String recordedError(McpSchema.CallToolResult result) {
+      List<McpSchema.Content> content = result.content() == null ? List.of() : result.content();
+      for (McpSchema.Content item : content) {
+         if (item instanceof McpSchema.TextContent textContent && !textContent.text().isBlank()) {
+            return truncate(textContent.text());
+         }
+      }
+      return "tool reported an error";
+   }
+
+   private static String truncate(String value) {
+      if (value == null) {
+         return null;
+      }
+      String normalized = value.replace('\r', ' ').replace('\n', ' ').trim();
+      return normalized.length() <= MAX_RECORDED_ERROR_LENGTH ? normalized : normalized.substring(0, MAX_RECORDED_ERROR_LENGTH) + "...";
    }
 
    private McpSchema.Tool tool(String name, String description, String schema) {

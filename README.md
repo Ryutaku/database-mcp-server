@@ -33,6 +33,7 @@
   - Web 管理后台
   - API Key 鉴权
   - 管理口令保护
+  - 热点数据源统计（每次工具调用记一条明细，见 5.3）
 
 ## 3. 构建
 
@@ -180,6 +181,42 @@ HTTP 服务会把所有基础配置和数据源映射持久化到 SQLite。
 - `GET /admin/api/blacklist-rules?type=oracle`：返回该类型的规则清单与默认勾选项
 - `PUT /admin/api/datasources/{id}`：`executeBlacklist` 字段接收规则 id 数组，未知 id 直接报 400，不会静默丢弃
 
+### 5.3 热点数据源统计
+
+管理后台第三个 tab 展示哪些数据源被调用得最多。数据来源是每一次 MCP 工具调用，一条一行。
+
+记录内容：`datasourceId`、工具名、耗时、成功/失败、错误摘要、会话 id、时间。**不保存 SQL 语句**，排行用不到，存下来只是体积和隐私负担。
+
+埋点在 `GenericMcpTools` 注册工具时统一包一层，因此：
+
+- 别名工具（`pg_*`）按自己的名字计数
+- 调用一个不存在的数据源同样计入，记为失败，`datasourceId` 就是客户端传的那个
+- stdio 模式没有落库的地方，不记录，工具行为不变
+
+写入路径：工具调用线程只把记录放进有界队列，后台线程按 `flush-interval` 或攒满 200 条批量写 SQLite。队列满时丢弃并告警一次——丢统计比卡住客户端要得起。
+
+存储：`mcp_tool_invocation` 表，与配置同一个 SQLite 文件，启动时自动建表。
+
+保留：`retention-days` 与 `max-rows` 两个上限，写入线程每小时清理一次，重启后一小时内也会跑第一次。
+
+```yaml
+database-mcp:
+  http:
+    usage-stats:
+      enabled: true          # false 时完全不记录，面板保持为空
+      retention-days: 30
+      max-rows: 200000
+      flush-interval: 1s
+      queue-capacity: 10000
+```
+
+相关接口：
+
+- `GET /admin/api/usage-stats?window=today|7d|30d|all`：按数据源和按工具的排行
+- `GET /admin/api/usage-records?datasourceId=&tool=&outcome=&window=&page=&size=`：调用明细，新的在前
+- `GET /admin/api/usage-filters`：明细筛选的候选值
+- `DELETE /admin/api/usage-records`：清空全部记录
+
 ## 6. HTTP 配置示例
 
 主配置文件：
@@ -233,6 +270,7 @@ database-mcp:
 - 维护基础 JDBC 配置
 - 维护数据源配置
 - 勾选每个数据源 `db_execute` 的拦截规则（见 5.2）
+- 查看热点数据源：按数据源和工具统计调用次数、耗时与失败（见 5.3）
 - 查看和修改运行时路由数据
 
 相关后端文件：

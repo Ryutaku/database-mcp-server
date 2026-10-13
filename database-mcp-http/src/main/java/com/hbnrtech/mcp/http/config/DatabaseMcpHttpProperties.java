@@ -20,6 +20,7 @@ public class DatabaseMcpHttpProperties {
    private String adminPasswordHeader = "X-Admin-Password";
    private String adminUsername = "admin";
    private String adminPassword = "";
+   private final UsageStats usageStats = new UsageStats();
 
    public String getEndpoint() {
       return this.endpoint;
@@ -131,5 +132,62 @@ public class DatabaseMcpHttpProperties {
 
    public void setAdminPassword(String adminPassword) {
       this.adminPassword = adminPassword;
+   }
+
+   public UsageStats getUsageStats() {
+      return this.usageStats;
+   }
+
+   /**
+    * How the hotspot ranking is fed. Every call is recorded, so the store needs a ceiling: the
+    * retention window drops aged rows and {@code maxRows} caps the table no matter how busy the
+    * server is.
+    */
+   public static class UsageStats {
+      private boolean enabled = true;
+      private int retentionDays = 30;
+      private long maxRows = 200_000L;
+      private Duration flushInterval = Duration.ofSeconds(1);
+      private int queueCapacity = 10_000;
+
+      public boolean isEnabled() {
+         return this.enabled;
+      }
+
+      public void setEnabled(boolean enabled) {
+         this.enabled = enabled;
+      }
+
+      public int getRetentionDays() {
+         return this.retentionDays;
+      }
+
+      public void setRetentionDays(int retentionDays) {
+         this.retentionDays = retentionDays;
+      }
+
+      public long getMaxRows() {
+         return this.maxRows;
+      }
+
+      public void setMaxRows(long maxRows) {
+         this.maxRows = maxRows;
+      }
+
+      public Duration getFlushInterval() {
+         return this.flushInterval;
+      }
+
+      public void setFlushInterval(Duration flushInterval) {
+         this.flushInterval = flushInterval;
+      }
+
+      public int getQueueCapacity() {
+         return this.queueCapacity;
+      }
+
+      public void setQueueCapacity(int queueCapacity) {
+         this.queueCapacity = queueCapacity;
+      }
    }
 }

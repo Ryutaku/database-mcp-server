@@ -133,6 +133,72 @@ public final class ConfigModels {
    ) {
    }
 
+   /** One row of the datasource hotspot ranking. */
+   public record DatasourceUsage(
+      String datasourceId,
+      long callCount,
+      long successCount,
+      long failureCount,
+      long avgDurationMillis,
+      long maxDurationMillis,
+      String lastSeenAt
+   ) {
+   }
+
+   /** One row of the tool ranking, across every datasource. */
+   public record ToolUsage(
+      String toolName,
+      long callCount,
+      long successCount,
+      long failureCount,
+      long avgDurationMillis,
+      long maxDurationMillis,
+      String lastSeenAt
+   ) {
+   }
+
+   /**
+    * The hotspot panel payload.
+    *
+    * @param window the window the caller asked for, echoed back so the UI can label every number
+    */
+   public record UsageStatsSummary(
+      String window,
+      String generatedAt,
+      long totalCalls,
+      long totalFailures,
+      List<DatasourceUsage> datasources,
+      List<ToolUsage> tools
+   ) {
+   }
+
+   /** One recorded call, as kept in the store. */
+   public record UsageRecord(
+      long id,
+      String datasourceId,
+      String toolName,
+      boolean success,
+      long durationMillis,
+      String errorMessage,
+      String sessionId,
+      String occurredAt
+   ) {
+   }
+
+   /** One page of the call detail list. */
+   public record UsageRecordPage(
+      long total,
+      List<UsageRecord> items
+   ) {
+   }
+
+   /** The values the detail filter can offer, read from the store itself. */
+   public record UsageFilters(
+      List<String> datasourceIds,
+      List<String> toolNames
+   ) {
+   }
+
    public record StoredAdminCredential(
       String username,
       String salt,

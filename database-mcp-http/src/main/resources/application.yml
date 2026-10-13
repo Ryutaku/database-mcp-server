@@ -39,6 +39,17 @@ database-mcp:
     # 如果库为空，启动时会先用下面的样例配置初始化
     config-db-path: data/database-mcp-config.db
 
+    # 热点数据源统计：每次 MCP 工具调用记一条明细，管理后台按数据源和工具排行
+    # enabled=false 时完全不记录，面板保持为空
+    # retention-days 与 max-rows 是明细表的上限，超出的旧记录由写入线程定期清掉
+    # 记录只含数据源、工具名、耗时和结果，不含 SQL 语句
+    usage-stats:
+      enabled: true
+      retention-days: 30
+      max-rows: 200000
+      flush-interval: 1s
+      queue-capacity: 10000
+
 #日志地址
 logging:
   file:

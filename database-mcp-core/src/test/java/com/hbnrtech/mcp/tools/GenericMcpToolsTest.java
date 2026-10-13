@@ -2,6 +2,7 @@ package com.hbnrtech.mcp.tools;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -20,7 +21,9 @@ import com.hbnrtech.mcp.execution.DatasourceRegistry;
 import com.hbnrtech.mcp.execution.JdbcExecutor;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.lang.reflect.Method;
+import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -139,6 +142,65 @@ class GenericMcpToolsTest {
 
       assertTrue(message.contains("not implemented"));
       verify(connectionManager, never()).getConnection(any());
+   }
+
+   @Test
+   void recordsEveryCallWithItsDatasourceToolAndOutcome() {
+      List<ToolInvocation> recorded = new ArrayList<>();
+      GenericMcpTools tools = new GenericMcpTools(new DatasourceRegistry(Map.of()), mock(JdbcExecutor.class), recorded::add);
+
+      findTool(tools, "db_query").handler().apply(null, Map.of("datasourceId", "not-configured", "sql", "select 1"));
+      findTool(tools, "db_list_tables").handler().apply(null, Map.of());
+
+      assertEquals(2, recorded.size());
+      assertEquals("not-configured", recorded.get(0).datasourceId());
+      assertEquals("db_query", recorded.get(0).toolName());
+      assertFalse(recorded.get(0).success());
+      assertTrue(recorded.get(0).errorMessage().contains("Unknown datasourceId"));
+      assertEquals(ToolInvocation.UNKNOWN_DATASOURCE, recorded.get(1).datasourceId());
+      assertEquals("db_list_tables", recorded.get(1).toolName());
+   }
+
+   @Test
+   void recordsASuccessfulCallAsASuccess() throws Exception {
+      ConnectionManager connectionManager = mock(ConnectionManager.class);
+      when(connectionManager.getConnection(any())).thenReturn(mock(Connection.class));
+      JdbcExecutor executor = mock(JdbcExecutor.class);
+      when(executor.toJson(any())).thenReturn("[]");
+      List<ToolInvocation> recorded = new ArrayList<>();
+      GenericMcpTools tools = new GenericMcpTools(
+         new DatasourceRegistry(Map.of("my", datasourceContext(DatabaseType.MYSQL, new MySqlDialect(), connectionManager))),
+         executor,
+         recorded::add
+      );
+
+      findTool(tools, "db_query").handler().apply(null, Map.of("datasourceId", "my", "sql", "select 1"));
+
+      assertEquals(1, recorded.size());
+      assertTrue(recorded.get(0).success());
+      assertNull(recorded.get(0).errorMessage());
+      assertTrue(recorded.get(0).durationMillis() >= 0);
+      assertNotNull(recorded.get(0).occurredAt());
+   }
+
+   @Test
+   void countsAnAliasCallUnderItsOwnName() {
+      List<ToolInvocation> recorded = new ArrayList<>();
+      GenericMcpTools tools = new GenericMcpTools(new DatasourceRegistry(Map.of()), mock(JdbcExecutor.class), recorded::add);
+
+      findTool(tools, "pg_list_tables").handler().apply(null, Map.of("datasourceId", "not-configured"));
+
+      assertEquals(1, recorded.size());
+      assertEquals("pg_list_tables", recorded.get(0).toolName());
+   }
+
+   @Test
+   void leavesHandlersUnwrappedWithoutAListener() {
+      GenericMcpTools tools = new GenericMcpTools(new DatasourceRegistry(Map.of()), mock(JdbcExecutor.class));
+
+      McpSchema.CallToolResult result = findTool(tools, "db_query").handler().apply(null, Map.of("datasourceId", "not-configured", "sql", "select 1"));
+
+      assertTrue(Boolean.TRUE.equals(result.isError()));
    }
 
    private static DatasourceContext datasourceContext(DatabaseType type, com.hbnrtech.mcp.dialect.DatabaseDialect dialect, ConnectionManager connectionManager) {

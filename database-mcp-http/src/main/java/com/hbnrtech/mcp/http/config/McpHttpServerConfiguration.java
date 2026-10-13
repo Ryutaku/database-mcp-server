@@ -6,6 +6,7 @@ import com.hbnrtech.mcp.execution.JdbcExecutor;
 import com.hbnrtech.mcp.http.admin.AdminCredentialService;
 import com.hbnrtech.mcp.http.admin.AdminPasswordAuthenticationFilter;
 import com.hbnrtech.mcp.http.admin.RuntimeConfigurationService;
+import com.hbnrtech.mcp.http.admin.UsageRecordingService;
 import com.hbnrtech.mcp.tools.GenericMcpTools;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
@@ -25,9 +26,9 @@ public class McpHttpServerConfiguration {
    private static final Logger LOGGER = LoggerFactory.getLogger(McpHttpServerConfiguration.class);
 
    @Bean
-   public DatabaseMcpRuntime databaseMcpRuntime(RuntimeConfigurationService runtimeConfigurationService) {
+   public DatabaseMcpRuntime databaseMcpRuntime(RuntimeConfigurationService runtimeConfigurationService, UsageRecordingService usageRecordingService) {
       JdbcExecutor executor = new JdbcExecutor();
-      GenericMcpTools tools = new GenericMcpTools(runtimeConfigurationService.datasourceRegistry(), executor);
+      GenericMcpTools tools = new GenericMcpTools(runtimeConfigurationService.datasourceRegistry(), executor, usageRecordingService);
       DatabaseMcpRuntime runtime = new DatabaseMcpRuntime(runtimeConfigurationService.datasourceRegistry(), executor, tools);
       LOGGER.info("Loaded {} datasource definitions", runtime.datasourceRegistry().datasources().size());
       runtime.datasourceRegistry().datasources().forEach((id, context) ->

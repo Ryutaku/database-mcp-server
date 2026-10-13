@@ -74,6 +74,18 @@
   var blacklistViewSummary = $id("blacklistViewSummary");
   var blacklistViewList    = $id("blacklistViewList");
 
+  var usageCountEl          = $id("usageCount");
+  var usageSummaryEl        = $id("usageSummary");
+  var usageDsTableBody      = $id("usageDsTableBody");
+  var usageToolTableBody    = $id("usageToolTableBody");
+  var usageRecordTableBody  = $id("usageRecordTableBody");
+  var usageWindowSelect     = $id("usageWindow");
+  var usageFilterDatasource = $id("usageFilterDatasource");
+  var usageFilterTool       = $id("usageFilterTool");
+  var usageFilterOutcome    = $id("usageFilterOutcome");
+  var usagePagerEl          = $id("usagePager");
+  var usagePageInfo         = $id("usagePageInfo");
+
   /* =========================  STATE  ========================= */
   var currentBaseConfigs = [];
   var currentDatasources = [];
@@ -88,6 +100,10 @@
 
   /* Datasource whose blacklist is currently shown in the read-only viewer. */
   var blacklistViewTarget = null;
+
+  /* The hotspot panel is fetched on first view; its detail list is paged by the server. */
+  var usageLoaded = false;
+  var usagePage = 1;
 
   /* =========================================================
      EVENT BINDINGS
@@ -104,8 +120,35 @@
     });
   }
 
+  /* --- 热点数据源 --- */
+  bind("usageRefreshBtn", "click", function () { loadUsage(true); });
+  bind("usageWindow", "change", function () {
+    usagePage = 1;
+    loadUsage(true);
+  });
+  bind("usageClearBtn", "click", function () {
+    showConfirm("清空调用统计", "确认删除已记录的全部工具调用明细？排行会随后续调用重新累积。").then(function (ok) {
+      if (!ok) return;
+      apiFetch("/usage-records", { method: "DELETE" })
+        .then(function () {
+          usagePage = 1;
+          return loadUsage(true, "调用统计已清空");
+        })
+        .catch(function (err) { showToast(err.message, true); });
+    });
+  });
+  ["usageFilterDatasource", "usageFilterTool", "usageFilterOutcome", "usagePageSize"].forEach(function (id) {
+    bind(id, "change", function () {
+      if (id === "usagePageSize") usagePage = 1;
+      loadUsageRecords();
+    });
+  });
+
   /* --- Reload --- */
-  bind("reloadButton", "click", function () { loadConfig("配置已刷新"); });
+  bind("reloadButton", "click", function () {
+    loadConfig("配置已刷新");
+    if (usageLoaded) loadUsage(false, "统计已刷新");
+  });
 
   /* --- Sign out --- */
   bind("logoutButton", "click", function () {
@@ -737,6 +780,171 @@
   }
 
   /* =========================================================
+     HOTSPOT PANEL
+     ========================================================= */
+
+  function currentUsageWindow() {
+    return usageWindowSelect ? usageWindowSelect.value : "7d";
+  }
+
+  function windowLabel(code) {
+    var labels = { today: "今天", "7d": "近 7 天", "30d": "近 30 天", all: "全部" };
+    return labels[code] || code;
+  }
+
+  function loadUsage(refreshFilters, successMsg) {
+    usageLoaded = true;
+    var filters = refreshFilters
+      ? apiFetch("/usage-filters").then(applyUsageFilters).catch(function () {})
+      : Promise.resolve();
+    return Promise.all([
+      filters,
+      apiFetch("/usage-stats?window=" + encodeURIComponent(currentUsageWindow())),
+      loadUsageRecords()
+    ]).then(function (results) {
+      renderUsageSummary(results[1]);
+      renderUsageRankings(results[1]);
+      if (successMsg) showToast(successMsg);
+    }).catch(function (err) {
+      showToast(err.message, true);
+    });
+  }
+
+  function loadUsageRecords() {
+    if (!usageRecordTableBody) return Promise.resolve();
+    var query = "/usage-records?window=" + encodeURIComponent(currentUsageWindow()) +
+      "&page=" + usagePage +
+      "&size=" + getUsagePageSize() +
+      "&datasourceId=" + encodeURIComponent(usageFilterDatasource ? usageFilterDatasource.value : "") +
+      "&tool=" + encodeURIComponent(usageFilterTool ? usageFilterTool.value : "") +
+      "&outcome=" + encodeURIComponent(usageFilterOutcome ? usageFilterOutcome.value : "");
+    return apiFetch(query).then(renderUsageRecords).catch(function (err) {
+      showToast(err.message, true);
+    });
+  }
+
+  function applyUsageFilters(filters) {
+    fillUsageSelect(usageFilterDatasource, "全部数据源", filters.datasourceIds);
+    fillUsageSelect(usageFilterTool, "全部工具", filters.toolNames);
+  }
+
+  function fillUsageSelect(select, placeholder, values) {
+    if (!select) return;
+    var current = select.value;
+    var list = values || [];
+    select.innerHTML = '<option value="">' + esc(placeholder) + "</option>";
+    list.forEach(function (value) {
+      var option = document.createElement("option");
+      option.value = value;
+      option.textContent = value;
+      select.appendChild(option);
+    });
+    if (current && list.indexOf(current) !== -1) select.value = current;
+  }
+
+  function renderUsageSummary(summary) {
+    var total = Number(summary.totalCalls) || 0;
+    if (usageCountEl) usageCountEl.textContent = fmtNum(total);
+    if (!usageSummaryEl) return;
+
+    if (total === 0) {
+      usageSummaryEl.innerHTML = '<div class="usage-empty">该窗口内还没有调用记录。换个时间窗口，或让 MCP 客户端调用一次工具。</div>';
+      return;
+    }
+
+    var lastSeen = null;
+    (summary.datasources || []).forEach(function (item) {
+      if (item.lastSeenAt && (!lastSeen || item.lastSeenAt > lastSeen)) lastSeen = item.lastSeenAt;
+    });
+
+    usageSummaryEl.innerHTML =
+      usageCard("时间窗口", windowLabel(summary.window)) +
+      usageCard("总调用", fmtNum(total)) +
+      usageCard("失败", fmtNum(summary.totalFailures)) +
+      usageCard("涉及数据源", fmtNum((summary.datasources || []).length)) +
+      usageCard("最近调用", fmtTime(lastSeen));
+  }
+
+  function usageCard(label, value) {
+    return '<div class="usage-card">' +
+      '<span class="usage-card-label">' + esc(label) + "</span>" +
+      '<span class="usage-card-value">' + esc(value) + "</span>" +
+      "</div>";
+  }
+
+  function renderUsageRankings(summary) {
+    renderUsageRankTable(usageDsTableBody, summary.datasources, "datasourceId", "该窗口内没有数据源调用记录。", true);
+    renderUsageRankTable(usageToolTableBody, summary.tools, "toolName", "该窗口内没有工具调用记录。", false);
+  }
+
+  /**
+   * The bar is scaled to the top of the ranking, not to 100%, so the second place still reads as a
+   * bar next to the first; the number beside it is the true share of all calls in the window.
+   */
+  function renderUsageRankTable(tbody, items, nameField, emptyMsg, withLastSeen) {
+    if (!tbody) return;
+    var list = items || [];
+    tbody.innerHTML = "";
+    if (!list.length) {
+      emptyRow(tbody, withLastSeen ? 7 : 6, emptyMsg);
+      return;
+    }
+
+    var total = list.reduce(function (sum, item) { return sum + (Number(item.callCount) || 0); }, 0);
+    var top = list.reduce(function (max, item) { return Math.max(max, Number(item.callCount) || 0); }, 0);
+
+    list.forEach(function (item) {
+      var calls = Number(item.callCount) || 0;
+      var share = top > 0 ? (calls / top) * 100 : 0;
+      var pct = total > 0 ? (calls / total) * 100 : 0;
+      var name = item[nameField] || "-";
+      var time = fmtTime(item.lastSeenAt);
+
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        '<td data-label="名称" title="' + esc(name) + '">' + esc(name) + "</td>" +
+        '<td data-label="调用数">' + fmtNum(calls) + "</td>" +
+        '<td data-label="占比"><div class="usage-bar" title="' + pct.toFixed(1) + '%"><span style="width:' + share.toFixed(1) + '%"></span></div><span class="usage-share">' + pct.toFixed(1) + "%</span></td>" +
+        '<td data-label="成功 / 失败"><span class="usage-ok">' + fmtNum(item.successCount) + '</span> / <span class="usage-bad">' + fmtNum(item.failureCount) + "</span></td>" +
+        '<td data-label="平均耗时">' + fmtMs(item.avgDurationMillis) + "</td>" +
+        '<td data-label="最大耗时">' + fmtMs(item.maxDurationMillis) + "</td>" +
+        (withLastSeen ? '<td data-label="最近调用" title="' + esc(time) + '">' + esc(time) + "</td>" : "");
+      tbody.appendChild(tr);
+    });
+
+    markClippedCells(tbody);
+  }
+
+  function renderUsageRecords(page) {
+    if (!usageRecordTableBody) return;
+    var items = (page && page.items) || [];
+    usageRecordTableBody.innerHTML = "";
+
+    if (!items.length) {
+      emptyRow(usageRecordTableBody, 6, "该窗口内没有符合条件的调用记录。");
+    } else {
+      items.forEach(function (record) {
+        var time = fmtTime(record.occurredAt);
+        var tr = document.createElement("tr");
+        tr.innerHTML =
+          '<td data-label="时间" title="' + esc(time) + '">' + esc(time) + "</td>" +
+          '<td data-label="Datasource ID" title="' + esc(record.datasourceId) + '">' + esc(record.datasourceId) + "</td>" +
+          '<td data-label="工具" title="' + esc(record.toolName) + '">' + esc(record.toolName) + "</td>" +
+          '<td data-label="结果"><span class="Label ' + (record.success ? "Label--success" : "Label--danger") + '">' + (record.success ? "成功" : "失败") + "</span></td>" +
+          '<td data-label="耗时">' + fmtMs(record.durationMillis) + "</td>" +
+          '<td data-label="错误" title="' + esc(record.errorMessage || "-") + '">' + esc(record.errorMessage || "-") + "</td>";
+        usageRecordTableBody.appendChild(tr);
+      });
+    }
+
+    markClippedCells(usageRecordTableBody);
+    renderPager(usagePagerEl, usagePageInfo, (page && page.total) || 0, usagePage, getUsagePageSize(), function (page) {
+      usagePage = page;
+      loadUsageRecords();
+    });
+  }
+
+  /* =========================================================
      FILTERS
      ========================================================= */
 
@@ -1061,6 +1269,11 @@
     }
     /* Cells can only be measured once their panel is visible. */
     markAllClippedCells();
+
+    /* The hotspot panel is the only view that reads a growing store, so it loads on first use. */
+    if (view === "usage" && !usageLoaded) {
+      loadUsage(false);
+    }
   }
 
   /* =========================================================
@@ -1085,9 +1298,34 @@
     return size > 0 ? size : 10;
   }
 
+  function getUsagePageSize() {
+    var el = $id("usagePageSize");
+    var size = el ? parseInt(el.value, 10) : 20;
+    return size > 0 ? size : 20;
+  }
+
   function fmtNum(v) {
     var n = Number(v);
     return isNaN(n) ? "0" : n.toLocaleString("zh-CN");
+  }
+
+  /** Durations are read as "how long did a call take", so the unit follows the magnitude. */
+  function fmtMs(v) {
+    var n = Number(v);
+    if (isNaN(n)) return "-";
+    if (n < 1000) return n + " ms";
+    if (n < 60000) return (n / 1000).toFixed(2) + " s";
+    return Math.floor(n / 60000) + " 分 " + Math.round((n % 60000) / 1000) + " 秒";
+  }
+
+  /** The store keeps UTC; the panel shows the browser's local time, like every other timestamp. */
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    var date = new Date(iso);
+    if (isNaN(date.getTime())) return String(iso);
+    function pad(n) { return n < 10 ? "0" + n : String(n); }
+    return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+      " " + pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
   }
 
   /**
@@ -1110,6 +1348,9 @@
   function markAllClippedCells() {
     markClippedCells(baseTableBody);
     markClippedCells(dsTableBody);
+    markClippedCells(usageDsTableBody);
+    markClippedCells(usageToolTableBody);
+    markClippedCells(usageRecordTableBody);
   }
 
   function renderPager(pagerEl, infoEl, totalItems, page, pageSize, onGo) {
