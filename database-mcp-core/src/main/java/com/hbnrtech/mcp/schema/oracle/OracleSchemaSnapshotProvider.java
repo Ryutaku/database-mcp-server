@@ -9,16 +9,24 @@ import com.hbnrtech.mcp.schema.SchemaSnapshotProvider;
 import com.hbnrtech.mcp.schema.SequenceDef;
 import com.hbnrtech.mcp.schema.TableDef;
 import com.hbnrtech.mcp.schema.ViewDef;
+import java.io.IOException;
+import java.io.Reader;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
+   /** Guards against a single oversized metadata object (view text) exhausting memory. */
+   static final int MAX_METADATA_TEXT_CHARS = 1_000_000;
+
    @Override
    public SchemaSnapshot loadSnapshot(Connection connection, String schema) throws SQLException {
       String owner = normalizeOwner(schema, connection);
@@ -36,9 +44,22 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
    @Override
    public String buildTableDdl(Connection connection, String schema, String tableName) throws SQLException {
       String owner = normalizeOwner(schema, connection);
+      return this.renderTableDdl(
+         owner,
+         tableName,
+         this.loadColumns(connection, owner, tableName).getOrDefault(tableName, new LinkedHashMap<>()),
+         this.loadTableComments(connection, owner, tableName).get(tableName),
+         this.loadColumnComments(connection, owner, tableName).getOrDefault(tableName, new LinkedHashMap<>())
+      );
+   }
+
+   /**
+    * Renders a table DDL from already fetched metadata. Kept free of JDBC so the rendering can be
+    * unit tested, and so {@code getTables} can render every table from bulk queries.
+    */
+   String renderTableDdl(String owner, String tableName, Map<String, ColumnDef> columns, String tableComment, Map<String, String> columnComments) {
       StringBuilder sb = new StringBuilder();
       sb.append("CREATE TABLE ").append(this.quoteIdentifier(owner)).append(".").append(this.quoteIdentifier(tableName)).append(" (\n");
-      Map<String, ColumnDef> columns = this.getColumns(connection, owner, tableName);
       List<String> columnDefs = new ArrayList<>();
 
       for (ColumnDef col : columns.values()) {
@@ -55,13 +76,11 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
       sb.append(String.join(",\n", columnDefs));
       sb.append("\n)");
-      this.appendCommentStatements(connection, owner, tableName, sb);
+      this.appendCommentStatements(owner, tableName, tableComment, columnComments, sb);
       return sb.toString();
    }
 
-   private void appendCommentStatements(Connection connection, String owner, String tableName, StringBuilder sb) throws SQLException {
-      String tableComment = this.getTableComment(connection, owner, tableName);
-      Map<String, String> columnComments = this.getColumnComments(connection, owner, tableName);
+   private void appendCommentStatements(String owner, String tableName, String tableComment, Map<String, String> columnComments, StringBuilder sb) {
       if ((tableComment == null || tableComment.isBlank()) && columnComments.isEmpty()) {
          return;
       }
@@ -88,135 +107,284 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
       }
    }
 
+   /**
+    * Bulk fetch: one query for the table list, one for all columns, one for table comments and one
+    * for column comments. The previous per-table rendering cost five round trips per table.
+    */
    private Map<String, TableDef> getTables(Connection connection, String owner) throws SQLException {
+      List<String> tableNames = this.loadTableNames(connection, owner);
+      Map<String, Map<String, ColumnDef>> columnsByTable = this.loadColumns(connection, owner, null);
+      Map<String, String> tableComments = this.loadTableComments(connection, owner, null);
+      Map<String, Map<String, String>> columnCommentsByTable = this.loadColumnComments(connection, owner, null);
+
       Map<String, TableDef> tables = new LinkedHashMap<>();
+      for (String tableName : tableNames) {
+         Map<String, ColumnDef> columns = columnsByTable.getOrDefault(tableName, new LinkedHashMap<>());
+         String ddl = this.renderTableDdl(owner, tableName, columns, tableComments.get(tableName), columnCommentsByTable.getOrDefault(tableName, new LinkedHashMap<>()));
+         tables.put(tableName, new TableDef(tableName, owner, ddl, columns));
+      }
+      return tables;
+   }
+
+   private List<String> loadTableNames(Connection connection, String owner) throws SQLException {
+      List<String> tableNames = new ArrayList<>();
       String sql = "SELECT table_name FROM all_tables WHERE owner = ? ORDER BY table_name";
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, owner);
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               String tableName = rs.getString("table_name");
-               String ddl = this.buildTableDdl(connection, owner, tableName);
-               tables.put(tableName, new TableDef(tableName, owner, ddl, this.getColumns(connection, owner, tableName)));
+               tableNames.add(rs.getString("table_name"));
             }
          }
       }
-      return tables;
+      return tableNames;
    }
 
-   private Map<String, ColumnDef> getColumns(Connection connection, String owner, String tableName) throws SQLException {
-      Map<String, ColumnDef> columns = new LinkedHashMap<>();
-      String sql = "SELECT column_name, data_type, data_length, data_precision, data_scale, nullable, data_default, column_id "
-         + "FROM all_tab_columns WHERE owner = ? AND table_name = ? ORDER BY column_id";
+   /**
+    * @param tableName when non-null, restricts the query to a single table
+    * @return columns keyed by table name, then by column name in ordinal order
+    */
+   private Map<String, Map<String, ColumnDef>> loadColumns(Connection connection, String owner, String tableName) throws SQLException {
+      Map<String, Map<String, ColumnDef>> columnsByTable = new LinkedHashMap<>();
+      String sql = "SELECT table_name, column_name, data_type, data_length, data_precision, data_scale, nullable, data_default, column_id "
+         + "FROM all_tab_columns WHERE owner = ?"
+         + (tableName != null ? " AND table_name = ?" : "")
+         + " ORDER BY table_name, column_id";
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, owner);
-         stmt.setString(2, tableName);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
                String name = rs.getString("column_name");
-               columns.put(
-                  name,
-                  new ColumnDef(
-                     name,
-                     buildDataType(rs),
-                     "Y".equals(rs.getString("nullable")),
-                     rs.getString("data_default"),
-                     rs.getInt("column_id")
-                  )
-               );
+               columnsByTable
+                  .computeIfAbsent(rs.getString("table_name"), key -> new LinkedHashMap<>())
+                  .put(name, new ColumnDef(name, buildDataType(rs), "Y".equals(rs.getString("nullable")), rs.getString("data_default"), rs.getInt("column_id")));
             }
          }
       }
-      return columns;
+      return columnsByTable;
    }
 
-   private String getTableComment(Connection connection, String owner, String tableName) throws SQLException {
-      String sql = "SELECT comments FROM all_tab_comments WHERE owner = ? AND table_name = ? AND table_type = 'TABLE'";
-      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-         stmt.setString(1, owner);
-         stmt.setString(2, tableName);
-         try (ResultSet rs = stmt.executeQuery()) {
-            return rs.next() ? rs.getString("comments") : null;
-         }
-      }
-   }
-
-   private Map<String, String> getColumnComments(Connection connection, String owner, String tableName) throws SQLException {
+   private Map<String, String> loadTableComments(Connection connection, String owner, String tableName) throws SQLException {
       Map<String, String> comments = new LinkedHashMap<>();
-      String sql = "SELECT column_name, comments FROM all_col_comments WHERE owner = ? AND table_name = ? ORDER BY column_name";
+      String sql = "SELECT table_name, comments FROM all_tab_comments WHERE owner = ? AND table_type = 'TABLE'"
+         + (tableName != null ? " AND table_name = ?" : "");
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, owner);
-         stmt.setString(2, tableName);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               String comment = rs.getString("comments");
-               if (comment != null && !comment.isBlank()) {
-                  comments.put(rs.getString("column_name"), comment);
-               }
+               comments.put(rs.getString("table_name"), rs.getString("comments"));
             }
          }
       }
       return comments;
    }
 
+   private Map<String, Map<String, String>> loadColumnComments(Connection connection, String owner, String tableName) throws SQLException {
+      Map<String, Map<String, String>> commentsByTable = new LinkedHashMap<>();
+      String sql = "SELECT table_name, column_name, comments FROM all_col_comments WHERE owner = ?"
+         + (tableName != null ? " AND table_name = ?" : "")
+         + " ORDER BY table_name, column_name";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, owner);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
+         try (ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+               String comment = rs.getString("comments");
+               if (comment != null && !comment.isBlank()) {
+                  commentsByTable
+                     .computeIfAbsent(rs.getString("table_name"), key -> new LinkedHashMap<>())
+                     .put(rs.getString("column_name"), comment);
+               }
+            }
+         }
+      }
+      return commentsByTable;
+   }
+
+   /**
+    * Bulk fetch of index columns, aggregated in Java. LISTAGG was dropped because its result is a
+    * VARCHAR2 and a wide composite key raises ORA-01489.
+    */
    private Map<String, IndexDef> getIndexes(Connection connection, String owner) throws SQLException {
       Map<String, IndexDef> indexes = new LinkedHashMap<>();
-      String sql = "SELECT i.index_name, i.table_name, "
-         + "CASE WHEN i.uniqueness = 'UNIQUE' THEN 'CREATE UNIQUE INDEX ' ELSE 'CREATE INDEX ' END "
-         + "|| i.owner || '.' || i.index_name || ' ON ' || i.table_owner || '.' || i.table_name || ' (' || "
-         + "LISTAGG(c.column_name, ', ') WITHIN GROUP (ORDER BY c.column_position) || ')' AS definition "
+      String sql = "SELECT i.index_name, i.table_name, i.table_owner, "
+         + "CASE WHEN i.uniqueness = 'UNIQUE' THEN 1 ELSE 0 END AS is_unique, "
+         + "c.column_name "
          + "FROM all_indexes i "
          + "JOIN all_ind_columns c ON c.index_owner = i.owner AND c.index_name = i.index_name "
          + "WHERE i.owner = ? AND i.generated = 'N' "
-         + "GROUP BY i.owner, i.index_name, i.table_owner, i.table_name, i.uniqueness "
-         + "ORDER BY i.index_name";
+         + "ORDER BY i.index_name, c.column_position";
+      List<String> columnNames = new ArrayList<>();
+      String currentIndex = null;
+      String indexOwner = null;
+      String tableOwner = null;
+      String tableName = null;
+      boolean unique = false;
+
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, owner);
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               indexes.put(rs.getString("index_name"), new IndexDef(rs.getString("index_name"), rs.getString("table_name"), rs.getString("definition")));
+               String indexName = rs.getString("index_name");
+               if (!indexName.equals(currentIndex)) {
+                  if (currentIndex != null) {
+                     indexes.put(currentIndex, new IndexDef(currentIndex, tableName, renderIndexDefinition(indexOwner, currentIndex, tableOwner, tableName, unique, columnNames)));
+                  }
+                  currentIndex = indexName;
+                  indexOwner = owner;
+                  tableOwner = rs.getString("table_owner");
+                  tableName = rs.getString("table_name");
+                  unique = rs.getInt("is_unique") == 1;
+                  columnNames = new ArrayList<>();
+               }
+               columnNames.add(rs.getString("column_name"));
             }
          }
+      }
+
+      if (currentIndex != null) {
+         indexes.put(currentIndex, new IndexDef(currentIndex, tableName, renderIndexDefinition(indexOwner, currentIndex, tableOwner, tableName, unique, columnNames)));
       }
       return indexes;
    }
 
+   static String renderIndexDefinition(String indexOwner, String indexName, String tableOwner, String tableName, boolean unique, List<String> columns) {
+      return (unique ? "CREATE UNIQUE INDEX " : "CREATE INDEX ")
+         + indexOwner + "." + indexName
+         + " ON " + tableOwner + "." + tableName
+         + " (" + String.join(", ", columns) + ")";
+   }
+
    private Map<String, ConstraintDef> getConstraints(Connection connection, String owner) throws SQLException {
+      List<ConstraintRow> rows = this.loadConstraintRows(connection, owner);
+      Map<String, List<String>> localColumns = this.loadConstraintColumns(connection, owner, null);
+
+      Set<String> referencedOwners = new LinkedHashSet<>();
+      for (ConstraintRow row : rows) {
+         if ("R".equals(row.constraintType()) && row.refOwner() != null && !row.refOwner().equals(owner)) {
+            referencedOwners.add(row.refOwner());
+         }
+      }
+
+      Map<String, Map<String, List<String>>> referencedColumns = new LinkedHashMap<>();
+      for (String referencedOwner : referencedOwners) {
+         Set<String> constraintNames = new LinkedHashSet<>();
+         for (ConstraintRow row : rows) {
+            if (referencedOwner.equals(row.refOwner())) {
+               constraintNames.add(row.refConstraintName());
+            }
+         }
+         referencedColumns.put(referencedOwner, this.loadConstraintColumns(connection, referencedOwner, constraintNames));
+      }
+
       Map<String, ConstraintDef> constraints = new LinkedHashMap<>();
-      String sql = "SELECT c.constraint_name, c.table_name, c.constraint_type, "
-         + "CASE c.constraint_type "
-         + "WHEN 'P' THEN 'PRIMARY KEY (' || cols.column_list || ')' "
-         + "WHEN 'U' THEN 'UNIQUE (' || cols.column_list || ')' "
-         + "WHEN 'R' THEN 'FOREIGN KEY (' || cols.column_list || ') REFERENCES ' || c.r_owner || '.' || rc.table_name || ' (' || rcols.column_list || ')' "
-         + "ELSE NULL END AS definition "
+      for (ConstraintRow row : rows) {
+         List<String> columns = localColumns.get(row.name());
+         if (columns == null || columns.isEmpty()) {
+            continue;
+         }
+
+         List<String> refColumns = null;
+         if ("R".equals(row.constraintType()) && row.refOwner() != null) {
+            Map<String, List<String>> byName = owner.equals(row.refOwner()) ? localColumns : referencedColumns.get(row.refOwner());
+            refColumns = byName == null ? null : byName.get(row.refConstraintName());
+         }
+
+         String definition = renderConstraintDefinition(row.constraintType(), columns, row.refOwner(), row.refTableName(), refColumns);
+         constraints.put(row.name(), new ConstraintDef(row.name(), row.tableName(), constraintTypeName(row.constraintType()), definition));
+      }
+      return constraints;
+   }
+
+   private List<ConstraintRow> loadConstraintRows(Connection connection, String owner) throws SQLException {
+      List<ConstraintRow> rows = new ArrayList<>();
+      String sql = "SELECT c.constraint_name, c.table_name, c.constraint_type, c.r_owner, c.r_constraint_name, rc.table_name AS ref_table_name "
          + "FROM all_constraints c "
-         + "JOIN (SELECT owner, constraint_name, LISTAGG(column_name, ', ') WITHIN GROUP (ORDER BY position) AS column_list "
-         + "      FROM all_cons_columns GROUP BY owner, constraint_name) cols "
-         + "  ON cols.owner = c.owner AND cols.constraint_name = c.constraint_name "
          + "LEFT JOIN all_constraints rc ON rc.owner = c.r_owner AND rc.constraint_name = c.r_constraint_name "
-         + "LEFT JOIN (SELECT owner, constraint_name, LISTAGG(column_name, ', ') WITHIN GROUP (ORDER BY position) AS column_list "
-         + "           FROM all_cons_columns GROUP BY owner, constraint_name) rcols "
-         + "  ON rcols.owner = rc.owner AND rcols.constraint_name = rc.constraint_name "
          + "WHERE c.owner = ? AND c.constraint_type IN ('P', 'U', 'R') "
          + "ORDER BY c.constraint_name";
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, owner);
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               String type = switch (rs.getString("constraint_type")) {
-                  case "P" -> "PRIMARY KEY";
-                  case "U" -> "UNIQUE";
-                  case "R" -> "FOREIGN KEY";
-                  default -> rs.getString("constraint_type");
-               };
-               constraints.put(
+               rows.add(new ConstraintRow(
                   rs.getString("constraint_name"),
-                  new ConstraintDef(rs.getString("constraint_name"), rs.getString("table_name"), type, rs.getString("definition"))
-               );
+                  rs.getString("table_name"),
+                  rs.getString("constraint_type"),
+                  rs.getString("r_owner"),
+                  rs.getString("r_constraint_name"),
+                  rs.getString("ref_table_name")
+               ));
             }
          }
       }
-      return constraints;
+      return rows;
+   }
+
+   /**
+    * @param constraintNames when null, every constraint of the owner is fetched; otherwise the list
+    *                        is chunked to stay below the Oracle IN-list limit
+    */
+   private Map<String, List<String>> loadConstraintColumns(Connection connection, String owner, Collection<String> constraintNames) throws SQLException {
+      Map<String, List<String>> columnsByName = new LinkedHashMap<>();
+      if (constraintNames != null && constraintNames.isEmpty()) {
+         return columnsByName;
+      }
+
+      List<String> names = constraintNames == null ? List.of() : new ArrayList<>(constraintNames);
+      int chunkSize = 900;
+
+      for (int from = 0; constraintNames == null || from < names.size(); from += chunkSize) {
+         List<String> chunk = constraintNames == null ? List.of() : names.subList(from, Math.min(from + chunkSize, names.size()));
+         String sql = "SELECT constraint_name, column_name FROM all_cons_columns WHERE owner = ?"
+            + (constraintNames == null ? "" : " AND constraint_name IN (" + placeholders(chunk.size()) + ")")
+            + " ORDER BY constraint_name, position";
+         try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+            stmt.setString(1, owner);
+            for (int i = 0; i < chunk.size(); i++) {
+               stmt.setString(i + 2, chunk.get(i));
+            }
+            try (ResultSet rs = stmt.executeQuery()) {
+               while (rs.next()) {
+                  columnsByName.computeIfAbsent(rs.getString("constraint_name"), key -> new ArrayList<>()).add(rs.getString("column_name"));
+               }
+            }
+         }
+      }
+      return columnsByName;
+   }
+
+   static String renderConstraintDefinition(String constraintType, List<String> columns, String refOwner, String refTableName, List<String> refColumns) {
+      String columnList = String.join(", ", columns);
+      return switch (constraintType) {
+         case "P" -> "PRIMARY KEY (" + columnList + ")";
+         case "U" -> "UNIQUE (" + columnList + ")";
+         case "R" -> "FOREIGN KEY (" + columnList + ") REFERENCES "
+            + refOwner + "." + (refTableName == null ? "" : refTableName)
+            + " (" + String.join(", ", refColumns == null ? List.of() : refColumns) + ")";
+         default -> "";
+      };
+   }
+
+   private static String constraintTypeName(String constraintType) {
+      return switch (constraintType) {
+         case "P" -> "PRIMARY KEY";
+         case "U" -> "UNIQUE";
+         case "R" -> "FOREIGN KEY";
+         default -> constraintType;
+      };
+   }
+
+   private static String placeholders(int count) {
+      return String.join(", ", java.util.Collections.nCopies(count, "?"));
    }
 
    private Map<String, ViewDef> getViews(Connection connection, String owner) throws SQLException {
@@ -226,11 +394,39 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
          stmt.setString(1, owner);
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               views.put(rs.getString("view_name"), new ViewDef(rs.getString("view_name"), rs.getString("text")));
+               String viewName = rs.getString("view_name");
+               views.put(viewName, new ViewDef(viewName, readLongText(rs, "text")));
             }
          }
       }
       return views;
+   }
+
+   /**
+    * {@code all_views.text} is a LONG column. {@code getString} returns only what the driver fetched
+    * by default, which silently truncates long view definitions and hides real differences.
+    */
+   static String readLongText(ResultSet rs, String column) throws SQLException {
+      Reader reader = rs.getCharacterStream(column);
+      if (reader == null) {
+         return rs.getString(column);
+      }
+
+      try (reader) {
+         StringBuilder text = new StringBuilder();
+         char[] buffer = new char[8192];
+         int read;
+         while ((read = reader.read(buffer)) != -1) {
+            if (text.length() + read > MAX_METADATA_TEXT_CHARS) {
+               text.append(buffer, 0, Math.max(0, MAX_METADATA_TEXT_CHARS - text.length()));
+               return text.toString();
+            }
+            text.append(buffer, 0, read);
+         }
+         return text.toString();
+      } catch (IOException ex) {
+         throw new SQLException("Failed to read " + column + ": " + ex.getMessage(), ex);
+      }
    }
 
    private Map<String, RoutineDef> getRoutines(Connection connection, String owner) throws SQLException {
@@ -314,5 +510,15 @@ public class OracleSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
    private String quoteLiteral(String value) {
       return "'" + value.replace("'", "''") + "'";
+   }
+
+   private record ConstraintRow(
+      String name,
+      String tableName,
+      String constraintType,
+      String refOwner,
+      String refConstraintName,
+      String refTableName
+   ) {
    }
 }

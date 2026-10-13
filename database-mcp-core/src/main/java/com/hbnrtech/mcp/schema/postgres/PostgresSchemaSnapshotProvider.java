@@ -36,9 +36,22 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
    @Override
    public String buildTableDdl(Connection connection, String schema, String tableName) throws SQLException {
       String resolvedSchema = this.resolveSchema(connection, schema);
+      return this.renderTableDdl(
+         resolvedSchema,
+         tableName,
+         this.loadColumns(connection, resolvedSchema, tableName).getOrDefault(tableName, new LinkedHashMap<>()),
+         this.loadTableComments(connection, resolvedSchema, tableName).get(tableName),
+         this.loadColumnComments(connection, resolvedSchema, tableName).getOrDefault(tableName, new LinkedHashMap<>())
+      );
+   }
+
+   /**
+    * Renders a table DDL from already fetched metadata. Kept free of JDBC so the rendering can be
+    * unit tested, and so {@code getTables} can render every table from bulk queries.
+    */
+   String renderTableDdl(String schema, String tableName, Map<String, ColumnDef> columns, String tableComment, Map<String, String> columnComments) {
       StringBuilder sb = new StringBuilder();
-      sb.append("CREATE TABLE ").append(this.quoteIdentifier(resolvedSchema)).append(".").append(this.quoteIdentifier(tableName)).append(" (\n");
-      Map<String, ColumnDef> columns = this.getColumns(connection, resolvedSchema, tableName);
+      sb.append("CREATE TABLE ").append(this.quoteIdentifier(schema)).append(".").append(this.quoteIdentifier(tableName)).append(" (\n");
       List<String> colDefs = new ArrayList<>();
 
       for (ColumnDef col : columns.values()) {
@@ -55,13 +68,11 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
 
       sb.append(String.join(",\n", colDefs));
       sb.append("\n)");
-      this.appendCommentStatements(connection, resolvedSchema, tableName, sb);
+      this.appendCommentStatements(schema, tableName, tableComment, columnComments, sb);
       return sb.toString();
    }
 
-   private void appendCommentStatements(Connection connection, String schema, String tableName, StringBuilder sb) throws SQLException {
-      String tableComment = this.getTableComment(connection, schema, tableName);
-      Map<String, String> columnComments = this.getColumnComments(connection, schema, tableName);
+   private void appendCommentStatements(String schema, String tableName, String tableComment, Map<String, String> columnComments, StringBuilder sb) {
       if ((tableComment == null || tableComment.isBlank()) && columnComments.isEmpty()) {
          return;
       }
@@ -88,81 +99,112 @@ public class PostgresSchemaSnapshotProvider implements SchemaSnapshotProvider {
       }
    }
 
+   /**
+    * Bulk fetch: one query for the table list, one for all columns, one for table comments and one
+    * for column comments. The previous per-table rendering cost five round trips per table.
+    */
    private Map<String, TableDef> getTables(Connection connection, String schema) throws SQLException {
+      List<String> tableNames = this.loadTableNames(connection, schema);
+      Map<String, Map<String, ColumnDef>> columnsByTable = this.loadColumns(connection, schema, null);
+      Map<String, String> tableComments = this.loadTableComments(connection, schema, null);
+      Map<String, Map<String, String>> columnCommentsByTable = this.loadColumnComments(connection, schema, null);
+
       Map<String, TableDef> tables = new LinkedHashMap<>();
+      for (String tableName : tableNames) {
+         Map<String, ColumnDef> columns = columnsByTable.getOrDefault(tableName, new LinkedHashMap<>());
+         String ddl = this.renderTableDdl(schema, tableName, columns, tableComments.get(tableName), columnCommentsByTable.getOrDefault(tableName, new LinkedHashMap<>()));
+         tables.put(tableName, new TableDef(tableName, schema, ddl, columns));
+      }
+      return tables;
+   }
+
+   private List<String> loadTableNames(Connection connection, String schema) throws SQLException {
+      List<String> tableNames = new ArrayList<>();
       String sql = "SELECT t.table_name FROM information_schema.tables t WHERE t.table_schema = ? AND t.table_type = 'BASE TABLE' ORDER BY t.table_name";
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, schema);
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               String tableName = rs.getString("table_name");
-               String ddl = this.buildTableDdl(connection, schema, tableName);
-               tables.put(tableName, new TableDef(tableName, schema, ddl, this.getColumns(connection, schema, tableName)));
+               tableNames.add(rs.getString("table_name"));
             }
          }
       }
-      return tables;
+      return tableNames;
    }
 
-   private Map<String, ColumnDef> getColumns(Connection connection, String schema, String tableName) throws SQLException {
-      Map<String, ColumnDef> columns = new LinkedHashMap<>();
-      String sql = "SELECT c.column_name, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, c.ordinal_position "
-         + "FROM information_schema.columns c WHERE c.table_schema = ? AND c.table_name = ? ORDER BY c.ordinal_position";
+   /**
+    * @param tableName when non-null, restricts the query to a single table
+    * @return columns keyed by table name, then by column name in ordinal order
+    */
+   private Map<String, Map<String, ColumnDef>> loadColumns(Connection connection, String schema, String tableName) throws SQLException {
+      Map<String, Map<String, ColumnDef>> columnsByTable = new LinkedHashMap<>();
+      String sql = "SELECT c.table_name, c.column_name, c.data_type, c.character_maximum_length, c.numeric_precision, c.numeric_scale, c.is_nullable, c.column_default, c.ordinal_position "
+         + "FROM information_schema.columns c WHERE c.table_schema = ?"
+         + (tableName != null ? " AND c.table_name = ?" : "")
+         + " ORDER BY c.table_name, c.ordinal_position";
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, schema);
-         stmt.setString(2, tableName);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               columns.put(
-                  rs.getString("column_name"),
-                  new ColumnDef(
-                     rs.getString("column_name"),
-                     buildDataType(rs),
-                     "YES".equals(rs.getString("is_nullable")),
-                     rs.getString("column_default"),
-                     rs.getInt("ordinal_position")
-                  )
-               );
+               String name = rs.getString("column_name");
+               columnsByTable
+                  .computeIfAbsent(rs.getString("table_name"), key -> new LinkedHashMap<>())
+                  .put(name, new ColumnDef(name, buildDataType(rs), "YES".equals(rs.getString("is_nullable")), rs.getString("column_default"), rs.getInt("ordinal_position")));
             }
          }
       }
-      return columns;
+      return columnsByTable;
    }
 
-   private String getTableComment(Connection connection, String schema, String tableName) throws SQLException {
-      String sql = "SELECT obj_description(c.oid, 'pg_class') AS table_comment "
-         + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-         + "WHERE n.nspname = ? AND c.relname = ? AND c.relkind IN ('r', 'p')";
-      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-         stmt.setString(1, schema);
-         stmt.setString(2, tableName);
-         try (ResultSet rs = stmt.executeQuery()) {
-            return rs.next() ? rs.getString("table_comment") : null;
-         }
-      }
-   }
-
-   private Map<String, String> getColumnComments(Connection connection, String schema, String tableName) throws SQLException {
+   private Map<String, String> loadTableComments(Connection connection, String schema, String tableName) throws SQLException {
       Map<String, String> comments = new LinkedHashMap<>();
-      String sql = "SELECT a.attname, col_description(c.oid, a.attnum) AS column_comment "
-         + "FROM pg_attribute a "
-         + "JOIN pg_class c ON c.oid = a.attrelid "
-         + "JOIN pg_namespace n ON n.oid = c.relnamespace "
-         + "WHERE n.nspname = ? AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped "
-         + "ORDER BY a.attnum";
+      String sql = "SELECT c.relname AS table_name, obj_description(c.oid, 'pg_class') AS table_comment "
+         + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+         + "WHERE n.nspname = ? AND c.relkind IN ('r', 'p')"
+         + (tableName != null ? " AND c.relname = ?" : "");
       try (PreparedStatement stmt = connection.prepareStatement(sql)) {
          stmt.setString(1, schema);
-         stmt.setString(2, tableName);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
          try (ResultSet rs = stmt.executeQuery()) {
             while (rs.next()) {
-               String comment = rs.getString("column_comment");
-               if (comment != null && !comment.isBlank()) {
-                  comments.put(rs.getString("attname"), comment);
-               }
+               comments.put(rs.getString("table_name"), rs.getString("table_comment"));
             }
          }
       }
       return comments;
+   }
+
+   private Map<String, Map<String, String>> loadColumnComments(Connection connection, String schema, String tableName) throws SQLException {
+      Map<String, Map<String, String>> commentsByTable = new LinkedHashMap<>();
+      String sql = "SELECT c.relname AS table_name, a.attname, col_description(c.oid, a.attnum) AS column_comment "
+         + "FROM pg_attribute a "
+         + "JOIN pg_class c ON c.oid = a.attrelid "
+         + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+         + "WHERE n.nspname = ? AND a.attnum > 0 AND NOT a.attisdropped"
+         + (tableName != null ? " AND c.relname = ?" : "")
+         + " ORDER BY c.relname, a.attnum";
+      try (PreparedStatement stmt = connection.prepareStatement(sql)) {
+         stmt.setString(1, schema);
+         if (tableName != null) {
+            stmt.setString(2, tableName);
+         }
+         try (ResultSet rs = stmt.executeQuery()) {
+            while (rs.next()) {
+               String comment = rs.getString("column_comment");
+               if (comment != null && !comment.isBlank()) {
+                  commentsByTable
+                     .computeIfAbsent(rs.getString("table_name"), key -> new LinkedHashMap<>())
+                     .put(rs.getString("attname"), comment);
+               }
+            }
+         }
+      }
+      return commentsByTable;
    }
 
    private Map<String, IndexDef> getIndexes(Connection connection, String schema) throws SQLException {
